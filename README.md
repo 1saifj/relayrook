@@ -19,7 +19,7 @@
 
 ---
 
-> **v0.2.** All five CLIs — Devin, Kiro, OpenCode, Claude Code and Codex — are driven through persistent sessions with turn control, parent-held permissions, and typed outcomes. Codex now runs through its app-server protocol, including steering, interruption, native review, and thread resume. The status table below separates what has been exercised live on one macOS machine from what is only advertised by an agent.
+> **v0.2.0.** All five CLIs — Devin, Kiro, OpenCode, Claude Code and Codex — are driven through persistent sessions with turn control, parent-held permissions, and typed outcomes. Codex runs through its app-server protocol, including steering, interruption, native review, and thread resume. The status table below separates what has been exercised live on one macOS machine from what is only advertised by an agent.
 
 RelayRook lets the agent you already use delegate work to your installed **Devin, Claude Code, Kiro, OpenCode, and Codex** CLIs. It discovers what is installed, chooses a route, keeps a persistent session, pauses on permission requests, and returns typed turn outcomes.
 
@@ -71,7 +71,7 @@ All five backends have completed a live inference turn through RelayRook. The fu
 
 ### Honest limits
 
-- **Route weights are configured preferences, not benchmarks.** `evidenceBasis` is `configured-preference` unless measured evaluation evidence exists in `<state>/route-evidence.json` (`runs >= 2` per route). `evals/run.mjs` produces that file from held-out task results, recording success, precision/recall, scope compliance, latency, and normalized usage per run. A single run stays anecdotal; repeat with `--runs N` or across invocations to reach the measured threshold.
+- **Route weights are configured preferences, not benchmarks.** `evidenceBasis` is `configured-preference` unless measured evaluation evidence exists in `<state>/route-evidence.json` (`runs >= 2` per route). `evals/run.mjs` produces that file from isolated fixture results, recording success, precision/recall, scope compliance, latency, and normalized usage per run. A single run stays anecdotal; repeat with `--runs N` or across invocations to reach the measured threshold.
 - **No quality/balanced/speed objective exists yet.** A speed- or quality-biased route is only honest once measured latency, usage, and accuracy span at least two eligible routes per role; the current evidence does not, so no such weight is configured.
 - **Kiro effort is confirmed after metadata arrives.** The initial session response has no effort field. Kiro then emits `_kiro.dev/metadata`; RelayRook records `support: "agent-notification"` and verifies the observed value against the requested value.
 - **Quota is always `unknown`.** A saved credential is not proof of remaining allowance, and RelayRook does not invent one.
@@ -180,7 +180,7 @@ skills/relayrook/             the distributable skill
   scripts/relayrook.mjs       self-contained entrypoint
   scripts/lib/                byte-for-byte copy of src/ (npm run build)
 tests/                        unit and end-to-end tests (node --test)
-evals/                        trigger and role fixtures, held-out eval runner
+evals/                        trigger and role fixtures, isolated eval runner
 docs/                         research, compatibility, inventory, evaluation plan
 ```
 
@@ -205,7 +205,7 @@ npm run check      # all three
 - [x] Implement Codex app-server thread and turn control, including `turn/steer`, `turn/interrupt`, `thread/resume`, and `review/start`.
 - [x] Support macOS, Linux and Windows with per-platform control transports and restart-safe sessions.
 - [x] Add capability preflight, typed unavailable-execution errors, signed delegation envelopes, and control-token authentication.
-- [x] Evaluate implementation quality and review accuracy on held-out tasks via `evals/run.mjs`.
+- [x] Evaluate implementation and review behavior on isolated tasks via `evals/run.mjs`; [record repeated trials and limitations](docs/evaluations-2026-09-13.md).
 - [ ] Add a generic quality/balanced/speed routing objective once measured evidence spans multiple eligible routes per role.
 - [x] Verify installed-skill delegation from Codex, Claude Code, Kiro, OpenCode, and Devin on macOS.
 - [x] Publish the first release under `1saifj/relayrook` and verify skills.sh discovery and installation.

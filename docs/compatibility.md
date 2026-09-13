@@ -2,7 +2,7 @@
 
 Observed on September 13, 2026, on one macOS machine. This records the underlying agent interfaces and the existing Devin prototype.
 
-> **v0.2.** All five CLIs run through the shared RelayRook runtime. Codex is now a full backend: `thread/start`, `turn/start`, streamed `item/*` events, `turn/steer`, `turn/interrupt`, `review/start`, `thread/resume`, `model/list` and `account/read` were exercised against the installed `codex app-server`. ACP backends additionally gained `session/load` resume where the agent advertises it. See the [README status table](../README.md#status).
+> **v0.2.0.** All five CLIs run through the shared RelayRook runtime. Codex supports: `thread/start`, `turn/start`, streamed `item/*` events, `turn/steer`, `turn/interrupt`, `review/start`, `thread/resume`, `model/list` and `account/read` were exercised against the installed `codex app-server`. ACP backends support `session/load` resume where the agent advertises it. See the [README status table](../README.md#status).
 
 | Agent | CLI version | Interface | Validation depth |
 | :--- | :--- | :--- | :--- |
@@ -18,7 +18,7 @@ Observed on September 13, 2026, on one macOS machine. This records the underlyin
 
 **Defaults need checking.** OpenCode's new ACP session selected a different model from its global configuration. The successful Go test explicitly selected and read back `opencode-go/kimi-k2.7-code` before prompting.
 
-**Effort needs its own evidence.** Kiro's session response omits effort, then `_kiro.dev/metadata` reports it during operation; RelayRook now verifies that notification. Claude exposes effort as a config option and confirmed `max`. Codex listed supported reasoning levels per model.
+**Effort needs its own evidence.** Kiro's session response omits effort, then `_kiro.dev/metadata` reports it during operation; RelayRook verifies that notification. Claude exposes effort as a config option and confirmed `max`. Codex listed supported reasoning levels per model.
 
 **Steering differs from queueing and cancellation.** Codex exposes `turn/steer` and `turn/interrupt`, which RelayRook drives as `steer` and `cancel`. Claude's adapter advertised steering and prompt queueing; RelayRook does not use either, and does not present cancellation as equivalent to steering. [Codex app-server](https://learn.chatgpt.com/docs/app-server), [Claude adapter](https://github.com/agentclientprotocol/claude-agent-acp)
 

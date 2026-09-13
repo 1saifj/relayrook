@@ -1,0 +1,797 @@
+{
+  "date": "2026-09-13",
+  "version": "0.2.0",
+  "platform": "macOS arm64",
+  "scope": "Two repetitions per role and backend on three bounded seeded fixtures through the RelayRook CLI.",
+  "counts": {
+    "selected": 12,
+    "pass": 10,
+    "fail": 2,
+    "excluded": 6,
+    "totalRecorded": 18,
+    "allRecordedPass": 10,
+    "allRecordedFail": 8,
+    "timeoutTrials": 6,
+    "missingFinalContractTrials": 1
+  },
+  "limitations": [
+    "Review precision/recall match file basenames and line proximity only; they are not semantic accuracy, general review quality, or proof of exploitable vulnerabilities.",
+    "One small fixture per role, repeated twice, cannot justify best-agent claims or routing policy changes.",
+    "Latency includes manual permission response delays and concurrent runs. Models, role-specific timeout caps, and approval behavior differ; latency is not a fair speed ranking.",
+    "No seeded answer keys were copied into delegated workspaces. Code-review task contracts were clarified before the selected review runs.",
+    "Security scoring uses SQL injection and path traversal seeds only. String-comparison timing observations are informational and excluded from scoring.",
+    "An extra Codex symlink finding is unmatched by the fixture heuristic; this is not a semantic adjudication that the finding is false.",
+    "Six preliminary trials remain reported separately, including five timeouts and one ambiguous-contract review mismatch.",
+    "OpenCode implementation final-contract failures remain selected failures even though tool events showed a correct pagination edit and a passing check.",
+    "No evaluation evidence was installed in global routing state."
+  ],
+  "timeoutCapsSeconds": {
+    "codexImplementation": 120,
+    "selectedReview": 300,
+    "selectedCodexSecurity": 300,
+    "opencodeImplementation": 180,
+    "opencodeSecurity": 180,
+    "preliminaryCodex": 120,
+    "preliminaryOpencodeReview": 180
+  },
+  "groups": [
+    {
+      "backend": "codex",
+      "role": "implementation",
+      "model": "gpt-5.6-sol",
+      "effort": "high",
+      "passed": 2,
+      "runs": 2,
+      "latencySeconds": [
+        103.8,
+        94.5
+      ],
+      "locationPrecision": [
+        null,
+        null
+      ],
+      "locationRecall": [
+        null,
+        null
+      ],
+      "meanUncachedInputTokens": 15248,
+      "meanCachedInputTokens": 192832,
+      "meanOutputTokens": 3179,
+      "meanTotalTokens": 211259
+    },
+    {
+      "backend": "codex",
+      "role": "code-review",
+      "model": "gpt-5.6-sol",
+      "effort": "high",
+      "passed": 2,
+      "runs": 2,
+      "latencySeconds": [
+        68.3,
+        77.4
+      ],
+      "locationPrecision": [
+        1,
+        1
+      ],
+      "locationRecall": [
+        1,
+        1
+      ],
+      "meanUncachedInputTokens": 19951,
+      "meanCachedInputTokens": 90944,
+      "meanOutputTokens": 2396,
+      "meanTotalTokens": 113291
+    },
+    {
+      "backend": "codex",
+      "role": "security-review",
+      "model": "gpt-5.6-sol",
+      "effort": "high",
+      "passed": 2,
+      "runs": 2,
+      "latencySeconds": [
+        185.8,
+        140.6
+      ],
+      "locationPrecision": [
+        0.6666666666666666,
+        1
+      ],
+      "locationRecall": [
+        1,
+        1
+      ],
+      "meanUncachedInputTokens": 32033,
+      "meanCachedInputTokens": 172736,
+      "meanOutputTokens": 6735,
+      "meanTotalTokens": 211504
+    },
+    {
+      "backend": "opencode",
+      "role": "implementation",
+      "model": "opencode-go/kimi-k2.7-code",
+      "effort": null,
+      "passed": 0,
+      "runs": 2,
+      "latencySeconds": [
+        147.6,
+        180.3
+      ],
+      "locationPrecision": [
+        null,
+        null
+      ],
+      "locationRecall": [
+        null,
+        null
+      ],
+      "meanUncachedInputTokens": 2049,
+      "meanCachedInputTokens": null,
+      "meanOutputTokens": 237,
+      "meanTotalTokens": 74142
+    },
+    {
+      "backend": "opencode",
+      "role": "code-review",
+      "model": "opencode-go/kimi-k3",
+      "effort": null,
+      "passed": 2,
+      "runs": 2,
+      "latencySeconds": [
+        284,
+        292.8
+      ],
+      "locationPrecision": [
+        1,
+        1
+      ],
+      "locationRecall": [
+        1,
+        1
+      ],
+      "meanUncachedInputTokens": 528,
+      "meanCachedInputTokens": null,
+      "meanOutputTokens": 1373,
+      "meanTotalTokens": 74042
+    },
+    {
+      "backend": "opencode",
+      "role": "security-review",
+      "model": "opencode-go/deepseek-v4-pro",
+      "effort": null,
+      "passed": 2,
+      "runs": 2,
+      "latencySeconds": [
+        94.7,
+        84
+      ],
+      "locationPrecision": [
+        1,
+        1
+      ],
+      "locationRecall": [
+        1,
+        1
+      ],
+      "meanUncachedInputTokens": null,
+      "meanCachedInputTokens": null,
+      "meanOutputTokens": 1990,
+      "meanTotalTokens": 85994
+    }
+  ],
+  "runs": [
+    {
+      "backend": "codex",
+      "role": "code-review",
+      "run": 1,
+      "model": {
+        "requested": "gpt-5.6-sol",
+        "observed": "gpt-5.6-sol",
+        "verified": true
+      },
+      "effort": {
+        "requested": "high",
+        "observed": "high",
+        "verified": true
+      },
+      "status": "fail",
+      "reason": "turn running; result incomplete",
+      "latencyMs": 120273,
+      "scopeCompliant": null,
+      "scores": null,
+      "usage": {
+        "uncachedInputTokens": 20320,
+        "cachedInputTokens": 101760,
+        "cacheWriteInputTokens": 0,
+        "outputTokens": 2243,
+        "reasoningOutputTokens": 1390,
+        "totalTokens": 124323
+      },
+      "excluded": true,
+      "exclusionReason": "Preliminary task lacked explicit behavioral contracts"
+    },
+    {
+      "backend": "codex",
+      "role": "code-review",
+      "run": 2,
+      "model": {
+        "requested": "gpt-5.6-sol",
+        "observed": "gpt-5.6-sol",
+        "verified": true
+      },
+      "effort": {
+        "requested": "high",
+        "observed": "high",
+        "verified": true
+      },
+      "status": "fail",
+      "reason": "missed seeded findings: bulk-threshold-pre-discount,removeitem-mutates-input",
+      "latencyMs": 88988,
+      "scopeCompliant": true,
+      "scores": {
+        "truePositives": 1,
+        "falsePositives": 0,
+        "missed": [
+          "bulk-threshold-pre-discount",
+          "removeitem-mutates-input"
+        ],
+        "precision": 1,
+        "recall": 0.3333333333333333
+      },
+      "usage": {
+        "uncachedInputTokens": 21247,
+        "cachedInputTokens": 80512,
+        "cacheWriteInputTokens": 0,
+        "outputTokens": 2896,
+        "reasoningOutputTokens": 1494,
+        "totalTokens": 104655
+      },
+      "excluded": true,
+      "exclusionReason": "Preliminary task lacked explicit behavioral contracts"
+    },
+    {
+      "backend": "codex",
+      "role": "implementation",
+      "run": 1,
+      "model": {
+        "requested": "gpt-5.6-sol",
+        "observed": "gpt-5.6-sol",
+        "verified": true
+      },
+      "effort": {
+        "requested": "high",
+        "observed": "high",
+        "verified": true
+      },
+      "status": "pass",
+      "reason": null,
+      "latencyMs": 103826,
+      "scopeCompliant": true,
+      "scores": {
+        "checkPassed": true
+      },
+      "usage": {
+        "uncachedInputTokens": 14003,
+        "cachedInputTokens": 174848,
+        "cacheWriteInputTokens": 0,
+        "outputTokens": 3009,
+        "reasoningOutputTokens": 1689,
+        "totalTokens": 191860
+      },
+      "excluded": false,
+      "exclusionReason": null
+    },
+    {
+      "backend": "codex",
+      "role": "implementation",
+      "run": 2,
+      "model": {
+        "requested": "gpt-5.6-sol",
+        "observed": "gpt-5.6-sol",
+        "verified": true
+      },
+      "effort": {
+        "requested": "high",
+        "observed": "high",
+        "verified": true
+      },
+      "status": "pass",
+      "reason": null,
+      "latencyMs": 94491,
+      "scopeCompliant": true,
+      "scores": {
+        "checkPassed": true
+      },
+      "usage": {
+        "uncachedInputTokens": 16493,
+        "cachedInputTokens": 210816,
+        "cacheWriteInputTokens": 0,
+        "outputTokens": 3348,
+        "reasoningOutputTokens": 1685,
+        "totalTokens": 230657
+      },
+      "excluded": false,
+      "exclusionReason": null
+    },
+    {
+      "backend": "codex",
+      "role": "security-review",
+      "run": 1,
+      "model": {
+        "requested": "gpt-5.6-sol",
+        "observed": "gpt-5.6-sol",
+        "verified": true
+      },
+      "effort": {
+        "requested": "high",
+        "observed": "high",
+        "verified": true
+      },
+      "status": "fail",
+      "reason": "turn running; result incomplete",
+      "latencyMs": 120102,
+      "scopeCompliant": null,
+      "scores": null,
+      "usage": {
+        "uncachedInputTokens": 30133,
+        "cachedInputTokens": 126336,
+        "cacheWriteInputTokens": 0,
+        "outputTokens": 2132,
+        "reasoningOutputTokens": 997,
+        "totalTokens": 158601
+      },
+      "excluded": true,
+      "exclusionReason": "Preliminary 120-second security cutoff; 300-second retries reported separately"
+    },
+    {
+      "backend": "codex",
+      "role": "security-review",
+      "run": 2,
+      "model": {
+        "requested": "gpt-5.6-sol",
+        "observed": "gpt-5.6-sol",
+        "verified": true
+      },
+      "effort": {
+        "requested": "high",
+        "observed": "high",
+        "verified": true
+      },
+      "status": "fail",
+      "reason": "turn running; result incomplete",
+      "latencyMs": 120214,
+      "scopeCompliant": null,
+      "scores": null,
+      "usage": {
+        "uncachedInputTokens": 30338,
+        "cachedInputTokens": 234496,
+        "cacheWriteInputTokens": 0,
+        "outputTokens": 3541,
+        "reasoningOutputTokens": 2211,
+        "totalTokens": 268375
+      },
+      "excluded": true,
+      "exclusionReason": "Preliminary 120-second security cutoff; 300-second retries reported separately"
+    },
+    {
+      "backend": "opencode",
+      "role": "code-review",
+      "run": 1,
+      "model": {
+        "requested": "opencode-go/kimi-k3",
+        "observed": "opencode-go/kimi-k3",
+        "verified": true
+      },
+      "effort": {
+        "requested": null,
+        "observed": null,
+        "verified": false
+      },
+      "status": "fail",
+      "reason": "turn running; result incomplete",
+      "latencyMs": 180279,
+      "scopeCompliant": null,
+      "scores": null,
+      "usage": {
+        "uncachedInputTokens": null,
+        "cachedInputTokens": null,
+        "cacheWriteInputTokens": null,
+        "outputTokens": null,
+        "reasoningOutputTokens": null,
+        "totalTokens": null
+      },
+      "excluded": true,
+      "exclusionReason": "Preliminary task lacked explicit behavioral contracts"
+    },
+    {
+      "backend": "opencode",
+      "role": "code-review",
+      "run": 2,
+      "model": {
+        "requested": "opencode-go/kimi-k3",
+        "observed": "opencode-go/kimi-k3",
+        "verified": true
+      },
+      "effort": {
+        "requested": null,
+        "observed": null,
+        "verified": false
+      },
+      "status": "fail",
+      "reason": "turn awaiting-permission; result incomplete",
+      "latencyMs": 180190,
+      "scopeCompliant": null,
+      "scores": null,
+      "usage": {
+        "uncachedInputTokens": null,
+        "cachedInputTokens": null,
+        "cacheWriteInputTokens": null,
+        "outputTokens": null,
+        "reasoningOutputTokens": null,
+        "totalTokens": null
+      },
+      "excluded": true,
+      "exclusionReason": "Preliminary task lacked explicit behavioral contracts"
+    },
+    {
+      "backend": "opencode",
+      "role": "implementation",
+      "run": 1,
+      "model": {
+        "requested": "opencode-go/kimi-k2.7-code",
+        "observed": "opencode-go/kimi-k2.7-code",
+        "verified": true
+      },
+      "effort": {
+        "requested": null,
+        "observed": null,
+        "verified": false
+      },
+      "status": "fail",
+      "reason": "turn completed; result unparsed",
+      "latencyMs": 147637,
+      "scopeCompliant": null,
+      "scores": null,
+      "usage": {
+        "uncachedInputTokens": 2049,
+        "cachedInputTokens": null,
+        "cacheWriteInputTokens": null,
+        "outputTokens": 237,
+        "reasoningOutputTokens": null,
+        "totalTokens": 74142
+      },
+      "excluded": false,
+      "exclusionReason": null
+    },
+    {
+      "backend": "opencode",
+      "role": "implementation",
+      "run": 2,
+      "model": {
+        "requested": "opencode-go/kimi-k2.7-code",
+        "observed": "opencode-go/kimi-k2.7-code",
+        "verified": true
+      },
+      "effort": {
+        "requested": null,
+        "observed": null,
+        "verified": false
+      },
+      "status": "fail",
+      "reason": "turn running; result unparsed",
+      "latencyMs": 180264,
+      "scopeCompliant": null,
+      "scores": null,
+      "usage": {
+        "uncachedInputTokens": null,
+        "cachedInputTokens": null,
+        "cacheWriteInputTokens": null,
+        "outputTokens": null,
+        "reasoningOutputTokens": null,
+        "totalTokens": null
+      },
+      "excluded": false,
+      "exclusionReason": null
+    },
+    {
+      "backend": "opencode",
+      "role": "security-review",
+      "run": 1,
+      "model": {
+        "requested": "opencode-go/deepseek-v4-pro",
+        "observed": "opencode-go/deepseek-v4-pro",
+        "verified": true
+      },
+      "effort": {
+        "requested": null,
+        "observed": null,
+        "verified": false
+      },
+      "status": "pass",
+      "reason": null,
+      "latencyMs": 94662,
+      "scopeCompliant": true,
+      "scores": {
+        "unscoredObservations": 1,
+        "truePositives": 2,
+        "falsePositives": 0,
+        "missed": [],
+        "precision": 1,
+        "recall": 1
+      },
+      "usage": {
+        "uncachedInputTokens": null,
+        "cachedInputTokens": null,
+        "cacheWriteInputTokens": null,
+        "outputTokens": 2016,
+        "reasoningOutputTokens": null,
+        "totalTokens": 86303
+      },
+      "excluded": false,
+      "exclusionReason": null
+    },
+    {
+      "backend": "opencode",
+      "role": "security-review",
+      "run": 2,
+      "model": {
+        "requested": "opencode-go/deepseek-v4-pro",
+        "observed": "opencode-go/deepseek-v4-pro",
+        "verified": true
+      },
+      "effort": {
+        "requested": null,
+        "observed": null,
+        "verified": false
+      },
+      "status": "pass",
+      "reason": null,
+      "latencyMs": 83972,
+      "scopeCompliant": true,
+      "scores": {
+        "unscoredObservations": 1,
+        "truePositives": 2,
+        "falsePositives": 0,
+        "missed": [],
+        "precision": 1,
+        "recall": 1
+      },
+      "usage": {
+        "uncachedInputTokens": null,
+        "cachedInputTokens": null,
+        "cacheWriteInputTokens": null,
+        "outputTokens": 1964,
+        "reasoningOutputTokens": null,
+        "totalTokens": 85684
+      },
+      "excluded": false,
+      "exclusionReason": null
+    },
+    {
+      "backend": "codex",
+      "role": "code-review",
+      "run": 1,
+      "model": {
+        "requested": "gpt-5.6-sol",
+        "observed": "gpt-5.6-sol",
+        "verified": true
+      },
+      "effort": {
+        "requested": "high",
+        "observed": "high",
+        "verified": true
+      },
+      "status": "pass",
+      "reason": null,
+      "latencyMs": 68318,
+      "scopeCompliant": true,
+      "scores": {
+        "truePositives": 3,
+        "falsePositives": 0,
+        "missed": [],
+        "precision": 1,
+        "recall": 1
+      },
+      "usage": {
+        "uncachedInputTokens": 20345,
+        "cachedInputTokens": 79744,
+        "cacheWriteInputTokens": 0,
+        "outputTokens": 2385,
+        "reasoningOutputTokens": 919,
+        "totalTokens": 102474
+      },
+      "excluded": false,
+      "exclusionReason": null
+    },
+    {
+      "backend": "codex",
+      "role": "code-review",
+      "run": 2,
+      "model": {
+        "requested": "gpt-5.6-sol",
+        "observed": "gpt-5.6-sol",
+        "verified": true
+      },
+      "effort": {
+        "requested": "high",
+        "observed": "high",
+        "verified": true
+      },
+      "status": "pass",
+      "reason": null,
+      "latencyMs": 77352,
+      "scopeCompliant": true,
+      "scores": {
+        "truePositives": 3,
+        "falsePositives": 0,
+        "missed": [],
+        "precision": 1,
+        "recall": 1
+      },
+      "usage": {
+        "uncachedInputTokens": 19557,
+        "cachedInputTokens": 102144,
+        "cacheWriteInputTokens": 0,
+        "outputTokens": 2406,
+        "reasoningOutputTokens": 884,
+        "totalTokens": 124107
+      },
+      "excluded": false,
+      "exclusionReason": null
+    },
+    {
+      "backend": "opencode",
+      "role": "code-review",
+      "run": 1,
+      "model": {
+        "requested": "opencode-go/kimi-k3",
+        "observed": "opencode-go/kimi-k3",
+        "verified": true
+      },
+      "effort": {
+        "requested": null,
+        "observed": null,
+        "verified": false
+      },
+      "status": "pass",
+      "reason": null,
+      "latencyMs": 283954,
+      "scopeCompliant": true,
+      "scores": {
+        "truePositives": 3,
+        "falsePositives": 0,
+        "missed": [],
+        "precision": 1,
+        "recall": 1
+      },
+      "usage": {
+        "uncachedInputTokens": 528,
+        "cachedInputTokens": null,
+        "cacheWriteInputTokens": null,
+        "outputTokens": 1064,
+        "reasoningOutputTokens": null,
+        "totalTokens": 72925
+      },
+      "excluded": false,
+      "exclusionReason": null
+    },
+    {
+      "backend": "opencode",
+      "role": "code-review",
+      "run": 2,
+      "model": {
+        "requested": "opencode-go/kimi-k3",
+        "observed": "opencode-go/kimi-k3",
+        "verified": true
+      },
+      "effort": {
+        "requested": null,
+        "observed": null,
+        "verified": false
+      },
+      "status": "pass",
+      "reason": null,
+      "latencyMs": 292775,
+      "scopeCompliant": true,
+      "scores": {
+        "truePositives": 3,
+        "falsePositives": 0,
+        "missed": [],
+        "precision": 1,
+        "recall": 1
+      },
+      "usage": {
+        "uncachedInputTokens": null,
+        "cachedInputTokens": null,
+        "cacheWriteInputTokens": null,
+        "outputTokens": 1682,
+        "reasoningOutputTokens": null,
+        "totalTokens": 75158
+      },
+      "excluded": false,
+      "exclusionReason": null
+    },
+    {
+      "backend": "codex",
+      "role": "security-review",
+      "run": 1,
+      "model": {
+        "requested": "gpt-5.6-sol",
+        "observed": "gpt-5.6-sol",
+        "verified": true
+      },
+      "effort": {
+        "requested": "high",
+        "observed": "high",
+        "verified": true
+      },
+      "status": "pass",
+      "reason": null,
+      "latencyMs": 185818,
+      "scopeCompliant": true,
+      "scores": {
+        "unscoredObservations": 1,
+        "truePositives": 2,
+        "falsePositives": 1,
+        "missed": [],
+        "precision": 0.6666666666666666,
+        "recall": 1
+      },
+      "usage": {
+        "uncachedInputTokens": 35819,
+        "cachedInputTokens": 225024,
+        "cacheWriteInputTokens": 0,
+        "outputTokens": 7537,
+        "reasoningOutputTokens": 4323,
+        "totalTokens": 268380
+      },
+      "excluded": false,
+      "exclusionReason": null
+    },
+    {
+      "backend": "codex",
+      "role": "security-review",
+      "run": 2,
+      "model": {
+        "requested": "gpt-5.6-sol",
+        "observed": "gpt-5.6-sol",
+        "verified": true
+      },
+      "effort": {
+        "requested": "high",
+        "observed": "high",
+        "verified": true
+      },
+      "status": "pass",
+      "reason": null,
+      "latencyMs": 140606,
+      "scopeCompliant": true,
+      "scores": {
+        "unscoredObservations": 1,
+        "truePositives": 2,
+        "falsePositives": 0,
+        "missed": [],
+        "precision": 1,
+        "recall": 1
+      },
+      "usage": {
+        "uncachedInputTokens": 28247,
+        "cachedInputTokens": 120448,
+        "cacheWriteInputTokens": 0,
+        "outputTokens": 5932,
+        "reasoningOutputTokens": 3399,
+        "totalTokens": 154627
+      },
+      "excluded": false,
+      "exclusionReason": null
+    }
+  ],
+  "abortedPreFixDiagnostics": {
+    "attempts": 3,
+    "codexPromptPostureRejections": 2,
+    "opencodeInterruptedAwaitingPermission": 1,
+    "countedInRecordedMatrix": false,
+    "note": "The diagnostic run was interrupted after runner defects were identified. Its backend worker was stopped; these attempts have no scored outcome."
+  }
+}
