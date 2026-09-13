@@ -18,7 +18,8 @@ import {
   stopSession,
   waitSession,
 } from '../src/sessions.mjs';
-import { SessionStore } from '../src/state.mjs';
+import { SessionStore, listSessionKeys } from '../src/state.mjs';
+import { pidAlive } from '../src/platform.mjs';
 import { ERROR_CODES } from '../src/errors.mjs';
 
 /**
@@ -38,6 +39,16 @@ const execFileP = promisify(execFile);
 /** @type {{stateDir: string, workspace: string, key: string|null}} */
 const ctx = { stateDir: '', workspace: '', key: null };
 
+
+/** Verify process exit before removing a directory it may still use or write. */
+async function waitForExit(pid) {
+  const deadline = Date.now() + 15000;
+  while (pidAlive(pid)) {
+    assert.ok(Date.now() < deadline, `Process ${pid} remained alive during cleanup`);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
 test.before(() => {
   ctx.stateDir = mkdtempSync(path.join(os.tmpdir(), 'relayrook-codex-state-'));
   ctx.workspace = mkdtempSync(path.join(os.tmpdir(), 'relayrook-codex-ws-'));
@@ -48,12 +59,14 @@ test.before(() => {
 });
 
 test.after(async () => {
-  if (ctx.key) {
-    try {
-      await stopSession({ stateDir: ctx.stateDir, key: ctx.key });
-    } catch {
-      // Already stopped.
-    }
+  // Failed starts also own a worker and backend until shutdown completes;
+  // ctx.key only tracks the successful main session and cannot cover them.
+  for (const key of listSessionKeys(ctx.stateDir)) {
+    const store = new SessionStore(ctx.stateDir, key);
+    const meta = store.readMeta();
+    await stopSession({ stateDir: ctx.stateDir, key });
+    await waitForExit(meta.pid);
+    await waitForExit(meta.backendPid);
   }
   delete process.env.RELAYROOK_BACKEND_CMD_CODEX;
   delete process.env.FAKE_CODEX_MODEL;
@@ -194,7 +207,7 @@ test('prompt --role is accepted on a session with read-only posture', async () =
     const finished = await waitSession({ stateDir: ctx.stateDir, key, timeoutMs: 20000 });
     assert.equal(finished.turn.state, 'completed');
   } finally {
-    await stopSession({ stateDir: ctx.stateDir, key }).catch(() => {});
+    await stopSession({ stateDir: ctx.stateDir, key });
   }
 });
 
@@ -238,7 +251,7 @@ test('review/start runs a native review turn on a read-only session', async () =
     assert.match(finished.answer, /REVIEW_OK:uncommittedChanges/);
     assert.equal(finished.turn.mechanism, 'review/start');
   } finally {
-    await stopSession({ stateDir: ctx.stateDir, key: started.key }).catch(() => {});
+    await stopSession({ stateDir: ctx.stateDir, key: started.key });
   }
 });
 
@@ -292,7 +305,7 @@ test('a codex that predates the turn API is an unsupported-version error', async
     assert.equal(finished.turn.state, 'failed');
     assert.equal(finished.turn.error.code, ERROR_CODES.unsupported_backend_version);
   } finally {
-    if (key) await stopSession({ stateDir: ctx.stateDir, key }).catch(() => {});
+    if (key) await stopSession({ stateDir: ctx.stateDir, key });
     delete process.env.FAKE_CODEX_LEGACY;
   }
 });
@@ -339,7 +352,7 @@ test('resume:required fails typed when the thread is gone', async () => {
   meta.sessionId = 'thr-nonexistent';
   store.writeMeta(meta);
   process.kill(meta.pid, 'SIGKILL');
-  await new Promise((r) => setTimeout(r, 300));
+  await waitForExit(meta.pid);
   await assert.rejects(
     startSession({
       stateDir: ctx.stateDir,
