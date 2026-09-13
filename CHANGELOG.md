@@ -38,6 +38,11 @@ the prompt says so.
   edit tool, and sets `DEVIN_PERMISSION_MODE`; OpenCode postures are written as
   an `OPENCODE_CONFIG` permission file in the session directory; Claude uses
   `ACP_PERMISSION_MODE`; Codex keeps the sandbox and approval-policy mapping.
+- Only Codex claims `backend-sandbox`. Live evidence corrected the rest:
+  OpenCode with `edit: deny` wrote the file through `cat > file <<'EOF'`
+  instead, arriving as a `bash` permission request. Withholding an edit tool
+  is `parent-gated`, not a sandbox, and the docs say why that distinction
+  changes how a reviewer should read a bash request.
 - Kiro reports `auto-edits` as `requestedUnsupported` rather than pretending:
   it trusts tools by name, not by category.
 - The posture is part of the session key, so reusing a warm worker can never

@@ -96,11 +96,17 @@ posture, in `meta.permissions.enforcement`:
 | `auto-edits` | Edit the workspace without asking; commands still ask | A bounded task in a clean, committed, disposable tree — a branch or worktree you can throw away — where per-edit round trips would dominate the work |
 | `full-auto` | Everything, silently | Only when the user asked for an unattended run in a sandbox or throwaway container. Nothing reaches you, so you cannot claim you supervised it |
 
-`enforcement` is the honest part. `backend-sandbox` means the backend itself
-refuses the action. `parent-gated` means it reaches you as a request and cannot
-proceed until you answer. `prompt-only` means nothing but the prompt discourages
-it — never report a `prompt-only` session as read-only. Review roles default to
-`read-only` and refuse to start ungated.
+`enforcement` is the honest part. `backend-sandbox` means the operating system
+refuses the action whichever tool asks — only Codex's sandbox does that.
+`parent-gated` means it reaches you as a request and cannot proceed until you
+answer. `prompt-only` means nothing but the prompt discourages it — never report
+a `prompt-only` session as read-only. Review roles default to `read-only` and
+refuse to start ungated.
+
+A read-only session that is `parent-gated` still hands you the decision: an
+agent denied its edit tool will try the shell, so a `bash` request that writes
+a file in a review is the read-only boundary reaching you, and rejecting it is
+how the session stays read-only.
 
 Deciding one request (step 7) is a narrower question than choosing a mode:
 

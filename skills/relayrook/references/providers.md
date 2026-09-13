@@ -103,11 +103,27 @@ what the mode is actually held by, not what it is called.
 
 | Backend | Lever RelayRook drives | `read-only` | `gated` | `auto-edits` | `full-auto` |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| Devin | `DEVIN_PERMISSION_MODE`, `devin acp --agent-type` | `--agent-type review` + `auto` — the review agent has no edit tool (backend-sandbox) | `auto`: read-only tools auto-approved, edits and commands ask (parent-gated) | `accept-edits` (parent-gated for commands) | `dangerous` (prompt-only) |
+| Devin | `DEVIN_PERMISSION_MODE`, `devin acp --agent-type` | `--agent-type review` + `auto` — no edit tool, but it keeps shell tools (parent-gated) | `auto`: read-only tools auto-approved, edits and commands ask (parent-gated) | `accept-edits` (parent-gated for commands) | `dangerous` (prompt-only) |
 | Kiro | `kiro-cli acp --trust-all-tools` | no native read-only agent; every write asks (parent-gated) | default: everything asks (parent-gated) | unsupported — Kiro trusts tools by name, not category; reported as `requestedUnsupported` | `--trust-all-tools` (prompt-only) |
-| OpenCode | `OPENCODE_CONFIG` permission rules written into the session directory | `edit: deny`, `webfetch: deny` (backend-sandbox) | all `ask` (parent-gated) | `edit: allow` (parent-gated for bash) | all `allow` (prompt-only) |
-| Claude Code | `ACP_PERMISSION_MODE` | `plan` (backend-sandbox) | `default` (parent-gated) | `acceptEdits` (parent-gated) | `bypassPermissions` (prompt-only) |
+| OpenCode | `OPENCODE_CONFIG` permission rules written into the session directory | `edit: deny`, `webfetch: deny`, `bash: ask` (parent-gated) | all `ask` (parent-gated) | `edit: allow` (parent-gated for bash) | all `allow` (prompt-only) |
+| Claude Code | `ACP_PERMISSION_MODE` | `plan` (parent-gated) | `default` (parent-gated) | `acceptEdits` (parent-gated) | `bypassPermissions` (prompt-only) |
 | Codex | app-server sandbox + approval policy | `read-only` + `never` (backend-sandbox) | `workspace-write` + `on-request` (parent-gated) | `workspace-write` + `never` — the sandbox bounds it, escapes fail rather than ask (backend-sandbox) | `danger-full-access` + `never` (prompt-only) |
+
+Only Codex claims `backend-sandbox`, and only because its sandbox is enforced
+by the operating system for every tool. Withholding an edit tool is weaker than
+it sounds: with `edit: deny` set, OpenCode was observed writing the file
+through the shell instead —
+
+```
+cat > /tmp/ws/version.mjs <<'EOF'
+export const VERSION = "2.0.0";
+EOF
+```
+
+— which arrived as a `bash` permission request. The parent rejected it and the
+file was unchanged, which is the gate working; but a caller that auto-approves
+shell commands in a "read-only" session has no read-only session. Read bash
+requests in a review with that in mind.
 
 An explicit `--sandbox` or `--approval-policy` overrides the Codex mapping; the
 posture then reports `parent-gated` with a note that the caller pinned it,

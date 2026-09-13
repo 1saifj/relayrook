@@ -49,7 +49,8 @@ test('read-only uses the backend lever where one exists', () => {
     '--agent-type',
     'review',
   ]);
-  assert.equal(resolvePermissionPosture({ backend: 'devin', mode: 'read-only' }).enforcement, 'backend-sandbox');
+  // Withholding an edit tool is not a sandbox: the agent still has a shell.
+  assert.equal(resolvePermissionPosture({ backend: 'devin', mode: 'read-only' }).enforcement, 'parent-gated');
   assert.deepEqual(resolvePermissionPosture({ backend: 'codex', mode: 'read-only' }).codex, {
     sandbox: 'read-only',
     approvalPolicy: 'never',
@@ -57,6 +58,20 @@ test('read-only uses the backend lever where one exists', () => {
   assert.equal(resolvePermissionPosture({ backend: 'claude', mode: 'read-only' }).env.ACP_PERMISSION_MODE, 'plan');
   // Kiro has no read-only agent over ACP, so the honest claim is the parent gate.
   assert.equal(resolvePermissionPosture({ backend: 'kiro', mode: 'read-only' }).enforcement, 'parent-gated');
+});
+
+test('only an OS-level sandbox is claimed as a sandbox', () => {
+  // Observed live: OpenCode denied its edit tool wrote the file with
+  // `cat > version.mjs <<'EOF'` instead, which arrived as a bash permission
+  // request. Anything that only withholds a tool is parent-gated, not sealed.
+  for (const backend of ['devin', 'kiro', 'opencode', 'claude']) {
+    assert.notEqual(
+      resolvePermissionPosture({ backend, mode: 'read-only' }).enforcement,
+      'backend-sandbox',
+      `${backend} read-only keeps a shell, so it cannot claim a sandbox`,
+    );
+  }
+  assert.equal(resolvePermissionPosture({ backend: 'codex', mode: 'read-only' }).enforcement, 'backend-sandbox');
 });
 
 test('kiro reports auto-edits as unsupported instead of pretending', () => {
@@ -149,7 +164,7 @@ test('the posture reaches the spawned backend', async (t) => {
     startTimeoutMs: 60000,
   });
   assert.equal(started.meta.permissions.mode, 'read-only');
-  assert.equal(started.meta.permissions.enforcement, 'backend-sandbox');
+  assert.equal(started.meta.permissions.enforcement, 'parent-gated');
 
   await promptSession({ stateDir, key: started.key, text: 'LAUNCH_REPORT', timeoutMs: 30000 });
   const finished = await waitSession({ stateDir, key: started.key, timeoutMs: 30000, stopOnStall: false });

@@ -16,9 +16,11 @@ export const PERMISSION_MODES = Object.freeze(['read-only', 'gated', 'auto-edits
 /**
  * How a posture is held:
  *
- * - `backend-sandbox`: the backend itself refuses the action (Codex sandbox,
- *   Devin's read-only review agent, an OpenCode `deny` rule, Claude plan mode).
- *   The agent cannot perform it even if it tries.
+ * - `backend-sandbox`: the backend itself refuses the action, whichever tool
+ *   asks. In practice this means an OS-level sandbox — Codex's — because
+ *   withholding an edit tool is not the same thing: an agent denied its edit
+ *   tool will reach for the shell, and RelayRook has watched OpenCode do
+ *   exactly that (`cat > file <<'EOF'` after `edit: deny`).
  * - `parent-gated`: the action reaches the parent as a permission request and
  *   cannot proceed until the parent answers. Safe, but it costs a round trip
  *   per action and depends on the parent answering honestly.
@@ -46,12 +48,13 @@ const BACKEND_POSTURES = Object.freeze({
     mechanism: 'DEVIN_PERMISSION_MODE + devin acp --agent-type',
     modes: {
       'read-only': {
-        // The review agent has read-only plus shell tools — no edit tool to
-        // deny, so read-only is a property of the agent, not of the prompt.
+        // The review agent has read-only plus shell tools, so the edit tool is
+        // gone but the shell is not: a write attempt becomes a command the
+        // parent must approve.
         args: ['--agent-type', 'review'],
         env: { DEVIN_PERMISSION_MODE: 'auto' },
-        enforcement: 'backend-sandbox',
-        note: 'devin acp --agent-type review exposes no edit tools',
+        enforcement: 'parent-gated',
+        note: 'the review agent has no edit tool; it keeps shell tools, so a write through the shell asks the parent',
       },
       gated: {
         env: { DEVIN_PERMISSION_MODE: 'auto' },
@@ -92,8 +95,9 @@ const BACKEND_POSTURES = Object.freeze({
     modes: {
       'read-only': {
         config: { edit: 'deny', bash: 'ask', webfetch: 'deny' },
-        enforcement: 'backend-sandbox',
-        note: 'edit and webfetch are denied by config; the agent cannot write',
+        enforcement: 'parent-gated',
+        note:
+          'edit and webfetch are denied outright; observed live, the agent then writes through bash, which asks the parent',
       },
       gated: {
         config: { edit: 'ask', bash: 'ask', webfetch: 'ask' },
@@ -117,8 +121,8 @@ const BACKEND_POSTURES = Object.freeze({
     modes: {
       'read-only': {
         env: { ACP_PERMISSION_MODE: 'plan' },
-        enforcement: 'backend-sandbox',
-        note: 'plan mode withholds the edit tools',
+        enforcement: 'parent-gated',
+        note: 'plan mode withholds the edit tools; it is not a sandbox, so shell activity still asks the parent',
       },
       gated: { env: { ACP_PERMISSION_MODE: 'default' }, enforcement: 'parent-gated', note: 'file operations ask the parent' },
       'auto-edits': {
@@ -139,7 +143,7 @@ const BACKEND_POSTURES = Object.freeze({
       'read-only': {
         codex: { sandbox: 'read-only', approvalPolicy: 'never' },
         enforcement: 'backend-sandbox',
-        note: 'the sandbox denies writes outright rather than asking',
+        note: 'an OS-level sandbox denies every write, shell included, rather than asking',
       },
       gated: {
         codex: { sandbox: 'workspace-write', approvalPolicy: 'on-request' },
