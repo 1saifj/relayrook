@@ -19,7 +19,7 @@
 
 ---
 
-> **v0.2.1.** All five CLIs — Devin, Kiro, OpenCode, Claude Code and Codex — are driven through persistent sessions with turn control, parent-held permissions, and typed outcomes. Agent hosts use compact discovery followed by explicit route selection. Codex runs through its app-server protocol, including steering, interruption, native review, and thread resume. The status table below separates what has been exercised live on one macOS machine from what is only advertised by an agent.
+> **v0.3.0.** All five CLIs — Devin, Kiro, OpenCode, Claude Code and Codex — are driven through persistent sessions with turn control, parent-held permissions, and typed outcomes. A turn is judged by whether the backend is still producing anything, never by how long the work has taken. `--permission-mode` maps one vocabulary onto each backend's own permission system and reports which mechanism actually holds the posture. Agent hosts use compact discovery followed by explicit route selection. The status table below separates what has been exercised live on one macOS machine from what is only advertised by an agent.
 
 RelayRook lets the agent you already use delegate work to your installed **Devin, Claude Code, Kiro, OpenCode, and Codex** CLIs. It discovers what is installed, chooses a route, keeps a persistent session, pauses on permission requests, and returns typed turn outcomes.
 
@@ -130,13 +130,14 @@ All output is JSON. `{"ok": true, ...}` on stdout, `{"ok": false, "error": {"cod
 relayrook doctor [--compact] [--probe] [--caller <id>]
 relayrook preflight [--backend <id>]
 relayrook route --role implementation|code-review|security-review [--agent X] [--model Y] [--effort Z]
-relayrook start --backend <id> --workspace <dir> [--model] [--effort] [--profile] [--resume auto|required|never]
-relayrook prompt --session <key> --role <role> --task "..." [--check "npm test"]
+relayrook start --backend <id> --workspace <dir> [--model] [--effort] [--permission-mode read-only|gated|auto-edits|full-auto] [--resume auto|required|never]
+relayrook prompt --session <key> --role <role> --task "..." [--check "npm test"] [--stall-timeout ms] [--timeout ms]
 relayrook steer --session <key> --text "..."            # Codex only
 relayrook review --session <key> --target uncommitted-changes  # Codex only
 relayrook status --session <key> --cursor <n> [--full]
 relayrook wait --session <key> [--timeout ms] [--events] [--full]
 relayrook permission --session <key> --option <optionId>
+relayrook extend --session <key> [--timeout ms] [--stall-timeout ms] [--reset-deadline]
 relayrook cancel --session <key>
 relayrook stop --session <key>
 relayrook cleanup
@@ -157,6 +158,8 @@ relayrook wait --session "$S" --timeout 900000
 
 ## Design commitments
 
+- **Long is not the same as hung.** A turn is watched for silence, not for elapsed time: the inactivity window (`--stall-timeout`, 10 minutes) only fires when the backend has produced nothing at all, and by default it reports the stall and leaves the turn running so the caller can steer, `extend` or cancel. The wall-clock backstop (`--timeout`, 60 minutes) exists for a turn that never stops talking. A turn paused on a permission request is waiting for the caller, not silent.
+- **Permission postures are reported, not assumed.** `--permission-mode` drives each backend's own lever — Devin's review agent and `DEVIN_PERMISSION_MODE`, OpenCode's config permission rules, `ACP_PERMISSION_MODE`, Kiro's trust flags, the Codex sandbox — and the session says what actually holds the posture: `backend-sandbox` (only Codex, whose sandbox the OS enforces), `parent-gated`, or `prompt-only`. Withholding an edit tool is not a sandbox: OpenCode denied its edit tool was observed writing the file through the shell instead, which arrived as a permission request for the caller to reject.
 - **Explicit model control.** Devin stays pinned to `swe-2-max` unless you pass `--model`. A backend that will not confirm the requested model fails the start; it never runs on a different one.
 - **Never infer success from an exit code.** Turn outcomes come from the protocol's stop reason. A print-mode agent can exit 0 after a denied tool call.
 - **Parent-held permissions.** RelayRook advertises no filesystem or terminal capability, so tool requests pause the turn. The parent inspects the request and selects an advertised option within the user's authorized scope. There is no blanket-approval flag.

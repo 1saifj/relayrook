@@ -31,7 +31,7 @@ import {
   extendSession,
 } from './sessions.mjs';
 
-export const VERSION = '0.2.1';
+export const VERSION = '0.3.0';
 
 const BOOLEAN_FLAGS = [
   'probe',
