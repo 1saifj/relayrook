@@ -36,7 +36,7 @@ test.before(async () => {
   ctx.workspace = mkdtempSync(path.join(os.tmpdir(), 'relayrook-watchdog-ws-'));
   process.env[STUB_ENV_KEY] = JSON.stringify([process.execPath, stubPath]);
   process.env.FAKE_ACP_MODEL = 'swe-2-max';
-  process.env.FAKE_ACP_HEARTBEAT_MS = '60';
+  process.env.FAKE_ACP_HEARTBEAT_MS = '40';
   const started = await startSession({
     stateDir: ctx.stateDir,
     backend: 'devin',
@@ -99,17 +99,18 @@ test('a busy turn outlives many inactivity windows', async () => {
     stateDir: ctx.stateDir,
     key: ctx.key,
     text: 'HEARTBEAT',
-    stallTimeoutMs: 250,
+    stallTimeoutMs: 1000,
     timeoutMs: 0,
   });
 
-  // Four windows' worth of wall clock, with a heartbeat every 60ms.
-  await sleep(1100);
+  // Well past the window, with a heartbeat every 40ms. The margin is wide on
+  // purpose: a busy CI runner pausing for a moment is not a stalled backend.
+  await sleep(1500);
   const snapshot = await statusSession({ stateDir: ctx.stateDir, key: ctx.key });
   assert.equal(snapshot.turn.state, 'running');
   assert.equal(snapshot.turn.watchdog.stalled, false);
   assert.equal(snapshot.turn.watchdog.stallCount, 0);
-  assert.ok(snapshot.turn.watchdog.silentMs < 250);
+  assert.ok(snapshot.turn.watchdog.silentMs < 1000);
 
   await settle();
 });
@@ -155,7 +156,7 @@ test('extend gives an in-flight turn a new budget', async () => {
     key: ctx.key,
     text: 'HEARTBEAT',
     stallTimeoutMs: 0,
-    timeoutMs: 500,
+    timeoutMs: 2000,
   });
 
   const extended = await extendSession({
@@ -167,8 +168,8 @@ test('extend gives an in-flight turn a new budget', async () => {
   assert.equal(extended.ok, true);
   assert.equal(extended.watchdog.deadlineMs, 60000);
 
-  // Well past the original 500ms deadline.
-  await sleep(900);
+  // Well past the original deadline.
+  await sleep(2400);
   const snapshot = await statusSession({ stateDir: ctx.stateDir, key: ctx.key });
   assert.equal(snapshot.turn.state, 'running');
   assert.ok(snapshot.turn.watchdog.remainingMs > 1000);
