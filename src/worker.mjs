@@ -253,25 +253,51 @@ export class SessionWorker {
     this.meta.resume.mechanism = canResume ? (backend.resumeMechanism ?? 'session/load') : null;
     this.meta.resume.supported = canResume ? null : false;
 
-    if (resume?.nativeSessionId && canResume) {
-      this.meta.resume.lastAttempt = { at: new Date(this.now()).toISOString(), nativeSessionId: resume.nativeSessionId };
-      await this.connection.resumeSession({
-        nativeSessionId: resume.nativeSessionId,
-        cwd: this.spec.workspace,
-        timeoutMs: toPositiveInt(this.spec.sessionTimeoutMs, 120000),
-      });
-      this.meta.sessionId = this.connection.sessionId;
-      this.meta.resume.supported = true;
-      this.meta.recovered = this.meta.sessionId === resume.nativeSessionId;
-      this.#emit({
-        kind: 'session_recovered',
-        nativeSessionId: this.meta.sessionId,
-        mechanism: this.meta.resume.mechanism,
-      });
-    } else {
-      if (resume?.nativeSessionId) {
-        // The backend cannot resume; the spec decides whether to fail closed
-        // or continue on a fresh native session — either way it is recorded.
+    let resumed = false;
+    if (resume?.nativeSessionId) {
+      if (canResume) {
+        this.meta.resume.lastAttempt = {
+          at: new Date(this.now()).toISOString(),
+          nativeSessionId: resume.nativeSessionId,
+          ok: null,
+        };
+        try {
+          await this.connection.resumeSession({
+            nativeSessionId: resume.nativeSessionId,
+            cwd: this.spec.workspace,
+            timeoutMs: toPositiveInt(this.spec.sessionTimeoutMs, 120000),
+          });
+          this.meta.sessionId = this.connection.sessionId;
+          this.meta.resume.supported = true;
+          this.meta.resume.lastAttempt.ok = true;
+          this.meta.recovered = this.meta.sessionId === resume.nativeSessionId;
+          resumed = true;
+          this.#emit({
+            kind: 'session_recovered',
+            nativeSessionId: this.meta.sessionId,
+            mechanism: this.meta.resume.mechanism,
+          });
+        } catch (err) {
+          // An agent can advertise `loadSession` and still refuse the call.
+          // Only `required` fails closed on that: the default is to say so and
+          // continue on a fresh native session, because refusing to start at
+          // all would leave the caller with no way back into the workspace.
+          if (resume.policy === 'required') throw err;
+          this.meta.resume.supported = false;
+          this.meta.resume.lastAttempt.ok = false;
+          this.meta.resume.lastAttempt.error = {
+            code: err?.code ?? 'unknown',
+            message: err?.message ?? String(err),
+          };
+          this.#emit({
+            kind: 'session_not_resumable',
+            nativeSessionId: resume.nativeSessionId,
+            reason: `resume was rejected (${err?.message ?? err}); starting a fresh native session`,
+          });
+        }
+      } else {
+        // The backend has no resume primitive at all; the spec decides whether
+        // to fail closed or continue — either way it is recorded.
         if (resume.policy === 'required') {
           throw fail(ERROR_CODES.session_not_resumable, `${backend.id} does not support session resume`, {
             backend: backend.id,
@@ -285,6 +311,9 @@ export class SessionWorker {
           reason: 'backend has no resume primitive; starting a fresh native session',
         });
       }
+    }
+
+    if (!resumed) {
       if (typeof this.connection.createSession === 'function') {
         await this.connection.createSession({
           cwd: this.spec.workspace,

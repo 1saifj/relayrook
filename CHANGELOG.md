@@ -57,6 +57,13 @@ the prompt says so.
   directory that does not exist failed with `spawn /path/to/devin ENOENT`,
   which reads as a missing CLI. The workspace is checked before anything is
   spawned.
+- **A refused resume locked the caller out of the session.** An agent that
+  advertises `loadSession` and then rejects `session/load` — what a real agent
+  does once its stored session has expired — made every subsequent `start`
+  fail with `worker_start_failed`, with no way back into that workspace short
+  of `--resume never` or deleting state. `auto` now records the refusal
+  (`resume.lastAttempt.ok: false`, a `session_not_resumable` event) and
+  continues on a fresh native session; `required` still fails closed.
 - **Orphan cleanup could kill an unrelated process.** On macOS, process
   identity was read with `ps -o comm= -o lstart=`, and BSD `ps` pads every
   column but the last — so the recorded command was truncated to 16 characters

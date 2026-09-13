@@ -420,3 +420,54 @@ test('legacy Kiro model metadata is honoured end to end', async () => {
     process.env.FAKE_ACP_MODEL = 'swe-2-max';
   }
 });
+
+test('a rejected resume starts fresh instead of locking the caller out', async () => {
+  // The stub advertises `loadSession` and then refuses `session/load`, which
+  // is what a real agent does when its stored session has expired. With
+  // `resume: auto` that must not stop the caller getting back to work.
+  const stateDir = mkdtempSync(path.join(os.tmpdir(), 'relayrook-resume-state-'));
+  const workspace = mkdtempSync(path.join(os.tmpdir(), 'relayrook-resume-ws-'));
+  const spec = { stateDir, backend: 'devin', workspace, startTimeoutMs: 60000 };
+  try {
+    const first = await startSession(spec);
+    const meta = JSON.parse(readFileSync(new SessionStore(stateDir, first.key).metaFile, 'utf8'));
+    process.kill(meta.pid, 'SIGKILL');
+    await sleep(400);
+
+    const second = await startSession(spec);
+    assert.equal(second.meta.status, 'ready');
+    assert.equal(second.recovered, false, 'continuity is not claimed');
+    assert.equal(second.meta.resume.supported, false);
+    assert.equal(second.meta.resume.lastAttempt.ok, false);
+    assert.match(second.meta.resume.lastAttempt.error.message, /session\/load/);
+
+    const snapshot = await statusSession({ stateDir, key: second.key });
+    assert.ok(
+      snapshot.events.some((event) => event.kind === 'session_not_resumable'),
+      'the failed resume is on the record',
+    );
+    await stopSession({ stateDir, key: second.key });
+  } finally {
+    rmSync(stateDir, { recursive: true, force: true });
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('resume:required still fails closed when the backend refuses', async () => {
+  const stateDir = mkdtempSync(path.join(os.tmpdir(), 'relayrook-resume-req-'));
+  const workspace = mkdtempSync(path.join(os.tmpdir(), 'relayrook-resume-req-ws-'));
+  try {
+    const first = await startSession({ stateDir, backend: 'devin', workspace, startTimeoutMs: 60000 });
+    const meta = JSON.parse(readFileSync(new SessionStore(stateDir, first.key).metaFile, 'utf8'));
+    process.kill(meta.pid, 'SIGKILL');
+    await sleep(400);
+    await assert.rejects(
+      () => startSession({ stateDir, backend: 'devin', workspace, resume: 'required', startTimeoutMs: 60000 }),
+      (/** @type {any} */ err) => /session_not_resumable/.test(JSON.stringify(err.details ?? err.message ?? '')) ||
+        err.code === 'worker_start_failed',
+    );
+  } finally {
+    rmSync(stateDir, { recursive: true, force: true });
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
