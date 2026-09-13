@@ -8,6 +8,7 @@ import { EventLog, SessionStore, resolveStateDir, listSessionKeys, writeTurnReco
 import { JsonLineReader } from '../src/jsonline.mjs';
 import { writeJsonAtomic, sessionKey, redactPath, truncateText } from '../src/util.mjs';
 import { ERROR_CODES } from '../src/errors.mjs';
+import { IS_WINDOWS } from '../src/platform.mjs';
 
 /** @returns {string} */
 function tmpDir() {
@@ -21,11 +22,13 @@ test('the state directory defaults outside any repository', () => {
   const fromEnv = resolveStateDir(null, { RELAYROOK_STATE_DIR: '/tmp/from-env' });
   assert.equal(fromEnv, path.resolve('/tmp/from-env'));
 
-  const xdg = resolveStateDir(null, { XDG_STATE_HOME: '/tmp/xdg' });
-  assert.equal(xdg, path.join('/tmp/xdg', 'relayrook'));
+  const platformBase = path.resolve('/tmp/platform-state');
+  const platformEnv = IS_WINDOWS ? { LOCALAPPDATA: platformBase } : { XDG_STATE_HOME: platformBase };
+  assert.equal(resolveStateDir(null, platformEnv), path.join(platformBase, 'relayrook'));
 
   const fallback = resolveStateDir(null, {});
-  assert.ok(fallback.endsWith(path.join('.local', 'state', 'relayrook')));
+  const fallbackParts = IS_WINDOWS ? ['AppData', 'Local', 'relayrook'] : ['.local', 'state', 'relayrook'];
+  assert.equal(fallback, path.join(os.homedir(), ...fallbackParts));
   assert.ok(path.isAbsolute(fallback));
 });
 

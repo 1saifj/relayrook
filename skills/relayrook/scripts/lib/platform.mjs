@@ -115,7 +115,9 @@ export async function processIdentity(pid) {
         `$p=Get-Process -Id ${pid} -ErrorAction Stop; ` +
         '[pscustomobject]@{command=$p.Path;' +
         'startedAt=$p.StartTime.ToUniversalTime().Ticks.ToString()}|ConvertTo-Json -Compress';
-      const out = await execFileText('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], 2000);
+      // Cold PowerShell startup can exceed two seconds on a busy Windows
+      // host. Keep a bounded budget while allowing the identity probe to run.
+      const out = await execFileText('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], 8000);
       const parsed = JSON.parse(out.trim());
       if (typeof parsed?.command !== 'string' || typeof parsed?.startedAt !== 'string') return null;
       return { command: parsed.command, startedAt: parsed.startedAt };

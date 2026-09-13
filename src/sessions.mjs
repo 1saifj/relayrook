@@ -246,7 +246,8 @@ export async function startSession(spec) {
     const workerEntry = fileURLToPath(new URL('./worker-entry.mjs', import.meta.url));
     const logFd = openSync(store.logFile, 'a');
     const child = spawn(process.execPath, [workerEntry, '--session-dir', store.dir], {
-      detached: !IS_WINDOWS,
+      // Each CLI command exits while the worker keeps serving later commands.
+      detached: true,
       windowsHide: true,
       stdio: ['ignore', logFd, logFd],
       env: { ...process.env, ...(spec.env ?? {}) },

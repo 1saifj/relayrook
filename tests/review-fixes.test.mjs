@@ -74,7 +74,7 @@ test('resolveLaunchCommand returns the resolved executable path', () => {
       null,
       { PATH: binDir, PATHEXT: '.CMD;.BAT;.EXE' },
     );
-    assert.equal(launch.command, exe);
+    assert.equal(IS_WINDOWS ? launch.command.toLowerCase() : launch.command, IS_WINDOWS ? exe.toLowerCase() : exe);
     assert.ok(path.isAbsolute(launch.command));
     assert.deepEqual(launch.extraArgs, []);
   } finally {
