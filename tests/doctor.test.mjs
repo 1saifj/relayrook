@@ -41,6 +41,13 @@ test('an agent host can discover compactly and select with route without parsing
     assert.ok(Array.isArray(doctor.routes));
     assert.equal(doctor.backends.find((backend) => backend.id === 'devin').installed, true);
     assert.equal(Object.hasOwn(doctor.backends[0], 'evidence'), false);
+    // A backend RelayRook cannot launch reports no version of its own: the
+    // base CLI's version belongs under `hostVersion`, or `installed: false`
+    // sits next to a version number and reads as a contradiction.
+    for (const backend of doctor.backends) {
+      if (!backend.installed) assert.equal(backend.version, null, `${backend.id} claims no launchable version`);
+      else assert.equal(backend.hostVersion, null, `${backend.id} reports one version, not two`);
+    }
 
     const routeOut = capture();
     const routeErr = capture();

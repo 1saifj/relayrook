@@ -80,6 +80,11 @@ instead of re-running work that cannot succeed.
   of `--resume never` or deleting state. `auto` now records the refusal
   (`resume.lastAttempt.ok: false`, a `session_not_resumable` event) and
   continues on a fresh native session; `required` still fails closed.
+- **Compact doctor contradicted itself.** A backend that cannot be launched
+  reported `installed: false` beside the base CLI's version number — Claude
+  Code without its pinned adapter read as both missing and present. `version`
+  now describes the thing RelayRook would launch and the host CLI's version is
+  reported as `hostVersion`.
 - **Orphan cleanup could kill an unrelated process.** On macOS, process
   identity was read with `ps -o comm= -o lstart=`, and BSD `ps` pads every
   column but the last — so the recorded command was truncated to 16 characters

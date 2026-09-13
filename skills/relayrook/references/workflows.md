@@ -40,7 +40,10 @@ For ordinary delegation, run `doctor --compact` once and then use `route
 Both full and compact doctor responses represent `backends` and `routes` as
 arrays. Compact doctor uses schema `relayrook.doctor.compact.v1`, keeps only
 host-relevant readiness fields, configured installed candidates, warnings and
-active-session summaries; full doctor retains diagnostic evidence.
+active-session summaries; full doctor retains diagnostic evidence. A backend's
+`version` is the version of the thing RelayRook would launch, and is `null`
+when it cannot launch it; where only the base CLI is present — Claude Code
+without its pinned adapter — that version is reported as `hostVersion`.
 
 `--resume` controls worker-restart recovery: `auto` resumes the backend-native
 session where the backend supports it, `required` fails with

@@ -119,15 +119,23 @@ export async function runDoctor(input) {
  * @param {any} report
  */
 export function compactDoctorReport(report) {
-  const backends = (report.backends ?? []).map((backend) => ({
-    id: backend.id,
-    label: backend.label,
-    installed: backend.evidence?.installed === true,
-    version: backend.version ?? backend.hostVersion ?? null,
-    sessionSupport: backend.sessionSupport ?? null,
-    ready: backend.evidence?.installed === true && (backend.adapterReadiness?.ready ?? true),
-    problems: backend.problems ?? [],
-  }));
+  const backends = (report.backends ?? []).map((backend) => {
+    const installed = backend.evidence?.installed === true;
+    return {
+      id: backend.id,
+      label: backend.label,
+      installed,
+      // `version` describes the thing RelayRook would launch. Falling back to
+      // the base CLI's version here produced `installed: false` next to a
+      // version number, which reads as a contradiction; the host CLI's version
+      // is reported under its own name instead.
+      version: installed ? (backend.version ?? null) : null,
+      hostVersion: installed ? null : (backend.hostVersion ?? backend.version ?? null),
+      sessionSupport: backend.sessionSupport ?? null,
+      ready: installed && (backend.adapterReadiness?.ready ?? true),
+      problems: backend.problems ?? [],
+    };
+  });
   const installed = new Set(backends.filter((backend) => backend.installed).map((backend) => backend.id));
   const activeSessions = (report.sessions ?? [])
     .filter((session) => session.alive === true || ['starting', 'ready', 'stopping'].includes(session.status))
