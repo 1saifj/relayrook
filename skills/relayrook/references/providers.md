@@ -95,3 +95,29 @@ occupancy (`used`/`size`), not billing totals, and normalize accordingly.
 Failover stays inside the configured policy: a quota or transport error never
 moves work to a differently billed provider on its own, and a provider policy
 refusal is reported, not routed around.
+
+## Permission systems
+
+Each backend's own lever, and what RelayRook does with it. `enforcement` is
+what the mode is actually held by, not what it is called.
+
+| Backend | Lever RelayRook drives | `read-only` | `gated` | `auto-edits` | `full-auto` |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| Devin | `DEVIN_PERMISSION_MODE`, `devin acp --agent-type` | `--agent-type review` + `auto` — the review agent has no edit tool (backend-sandbox) | `auto`: read-only tools auto-approved, edits and commands ask (parent-gated) | `accept-edits` (parent-gated for commands) | `dangerous` (prompt-only) |
+| Kiro | `kiro-cli acp --trust-all-tools` | no native read-only agent; every write asks (parent-gated) | default: everything asks (parent-gated) | unsupported — Kiro trusts tools by name, not category; reported as `requestedUnsupported` | `--trust-all-tools` (prompt-only) |
+| OpenCode | `OPENCODE_CONFIG` permission rules written into the session directory | `edit: deny`, `webfetch: deny` (backend-sandbox) | all `ask` (parent-gated) | `edit: allow` (parent-gated for bash) | all `allow` (prompt-only) |
+| Claude Code | `ACP_PERMISSION_MODE` | `plan` (backend-sandbox) | `default` (parent-gated) | `acceptEdits` (parent-gated) | `bypassPermissions` (prompt-only) |
+| Codex | app-server sandbox + approval policy | `read-only` + `never` (backend-sandbox) | `workspace-write` + `on-request` (parent-gated) | `workspace-write` + `never` — the sandbox bounds it, escapes fail rather than ask (backend-sandbox) | `danger-full-access` + `never` (prompt-only) |
+
+An explicit `--sandbox` or `--approval-policy` overrides the Codex mapping; the
+posture then reports `parent-gated` with a note that the caller pinned it,
+rather than keeping a claim the mapping no longer makes.
+
+Devin's `--sandbox` flag (macOS seatbelt / Linux bwrap) is a separate process
+sandbox for its exec tool and is not driven by `--permission-mode`; a caller
+that wants it can set `DEVIN_SANDBOX` in the environment RelayRook inherits.
+
+The permission *options* inside a request are always the agent's own. RelayRook
+refuses an option the agent did not advertise (`permission_option_invalid`),
+because a plausible-looking `allow_always` that the agent never offered is a
+protocol error, not a decision.

@@ -92,6 +92,7 @@ export class SessionWorker {
       backend: this.spec.backend,
       workspace: this.spec.workspace,
       profile: this.spec.profile ?? 'default',
+      permissions: this.spec.permissions ?? null,
       pid: process.pid,
       backendPid: null,
       backendCommand: null,
@@ -218,6 +219,9 @@ export class SessionWorker {
       codex: this.spec.codex ?? undefined,
       command: this.spec.commandOverride ?? undefined,
       argsPrefix: this.spec.argsOverride ?? undefined,
+      // Permission posture flags belong after the backend's own protocol
+      // arguments (`devin acp --agent-type review`, `kiro-cli acp -a`).
+      extraArgs: this.spec.permissionArgs ?? undefined,
       env: this.spec.env ?? {},
       maxLineBytes: this.spec.maxLineBytes,
       stderrStream,

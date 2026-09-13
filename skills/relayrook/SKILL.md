@@ -83,6 +83,38 @@ separately.
    process exit code. `complete-no-findings` and `incomplete` are different
    outcomes.
 
+## Permissions
+
+Each backend has its own permission system. `start --permission-mode` maps one
+vocabulary onto all of them and reports which mechanism actually holds the
+posture, in `meta.permissions.enforcement`:
+
+| Mode | The delegated agent may | Choose it when |
+| :--- | :--- | :--- |
+| `read-only` | Read and run commands; never edit | Any review, any survey of unfamiliar code, anything on a tree you cannot afford to have changed |
+| `gated` (default) | Ask for every edit and command; you answer each | Implementation you are supervising, unfamiliar tasks, a dirty tree, anything outside a disposable workspace |
+| `auto-edits` | Edit the workspace without asking; commands still ask | A bounded task in a clean, committed, disposable tree — a branch or worktree you can throw away — where per-edit round trips would dominate the work |
+| `full-auto` | Everything, silently | Only when the user asked for an unattended run in a sandbox or throwaway container. Nothing reaches you, so you cannot claim you supervised it |
+
+`enforcement` is the honest part. `backend-sandbox` means the backend itself
+refuses the action. `parent-gated` means it reaches you as a request and cannot
+proceed until you answer. `prompt-only` means nothing but the prompt discourages
+it — never report a `prompt-only` session as read-only. Review roles default to
+`read-only` and refuse to start ungated.
+
+Deciding one request (step 7) is a narrower question than choosing a mode:
+
+- **Allow** when the action is inside the workspace, inside the task you
+  delegated, and reversible by version control — editing a file the contract
+  named, running the test command you supplied, reading anything in the tree.
+- **Ask the user** when it leaves that envelope: writing outside the workspace,
+  installing or publishing anything, network calls to services the task did not
+  name, credentials, `git push`, destructive commands (`rm -rf`, `git reset
+  --hard`, dropping data), or anything whose blast radius you cannot see.
+- **Never** relay an option the agent did not advertise, and never widen a
+  session's mode to escape a request you were unsure about — answer the
+  request, or cancel and re-delegate with a clearer contract.
+
 ## Roles
 
 | Role | Default posture | Result contract |

@@ -122,10 +122,14 @@ export async function processIdentity(pid) {
       if (typeof parsed?.command !== 'string' || typeof parsed?.startedAt !== 'string') return null;
       return { command: parsed.command, startedAt: parsed.startedAt };
     }
-    const out = await execFileText('ps', ['-o', 'comm=', '-o', 'lstart=', '-p', String(pid)], 2000);
-    const match = out.trim().match(/^(.*?)\s+([A-Z][a-z]{2}\s+[A-Z][a-z]{2}\s+\d+\s+\d{2}:\d{2}:\d{2}\s+\d{4})$/);
+    // `comm` must be the LAST column: BSD ps pads every column but the last to
+    // a fixed width, and with `comm` first a long path is cut to 16 characters
+    // — enough for two different binaries under the same directory to look
+    // like the same process to an identity check.
+    const out = await execFileText('ps', ['-o', 'lstart=', '-o', 'comm=', '-p', String(pid)], 2000);
+    const match = out.trim().match(/^([A-Z][a-z]{2}\s+[A-Z][a-z]{2}\s+\d+\s+\d{2}:\d{2}:\d{2}\s+\d{4})\s+(\S.*)$/);
     if (!match?.[1] || !match?.[2]) return null;
-    return { command: match[1].trim(), startedAt: match[2].replace(/\s+/g, ' ') };
+    return { command: match[2].trim(), startedAt: match[1].replace(/\s+/g, ' ') };
   } catch {
     return null;
   }

@@ -14,6 +14,7 @@ import { runPreflight } from './preflight.mjs';
 import { newId, redactPath } from './util.mjs';
 import { DEFAULT_TURN_STALL_MS, DEFAULT_TURN_TIMEOUT_MS } from './worker.mjs';
 import { getBackend } from './backends.mjs';
+import { normalizePermissionMode, PERMISSION_MODES } from './permissions.mjs';
 import {
   answerPermission,
   cancelSession,
@@ -83,6 +84,11 @@ Common options
 
 Discovery options
   --compact              Keep doctor output small for agent-host routing
+
+Permission options (start)
+  --permission-mode <m>  ${PERMISSION_MODES.join(' | ')} (default: read-only for review roles, gated otherwise)
+                         gated keeps every mutating action a request the caller answers;
+                         auto-edits lets the agent write without asking; full-auto asks for nothing
 
 Turn watchdog options (prompt, review, extend)
   --stall-timeout <ms>   Inactivity window; a turn is judged silent, never slow (default ${DEFAULT_TURN_STALL_MS}, 0 disables)
@@ -521,6 +527,8 @@ async function commandStart(flags, stateDir, env) {
   const roleReadOnly = role === 'code-review' || role === 'security-review';
   const profile = flagString(flags, 'profile') ?? (roleReadOnly ? 'read-only' : 'default');
 
+  const permissionMode = normalizePermissionMode(flagString(flags, 'permission-mode'));
+
   const routeId = newId();
   const envelope = childRouteEnvelope({ callerState, backend, routeId, routeKey: resolveRouteKey(stateDir) });
   const session = await startSession({
@@ -530,6 +538,8 @@ async function commandStart(flags, stateDir, env) {
     model,
     effort,
     profile,
+    permissionMode,
+    role,
     codex,
     caller: callerSummary(callerState),
     route: { routeId, role, selection: selection?.selected ?? null },

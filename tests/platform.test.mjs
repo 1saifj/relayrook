@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -110,6 +110,29 @@ test('Windows orphan cleanup terminates a verified shim and its descendants', wi
     await Promise.all([waitGone(child.pid), waitGone(tree.info.pid), waitGone(tree.info.descendant)]);
   } finally {
     if (child?.pid && pidAlive(child.pid)) await terminateWindowsProcessTree(child.pid);
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('process identity keeps the whole command path', { skip: IS_WINDOWS }, async () => {
+  // BSD ps pads every column but the last, so asking for `comm` before
+  // `lstart` cut the path to 16 characters: two binaries in the same local
+  // bin directory became one "identity", and orphan cleanup could SIGKILL
+  // whichever of them had inherited the recorded pid.
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'relayrook-identity-long-path-'));
+  const link = path.join(directory, 'a-deliberately-long-executable-name');
+  let child;
+  try {
+    symlinkSync(process.execPath, link);
+    child = spawn(link, ['-e', 'setInterval(()=>{},1000)'], { stdio: 'ignore' });
+    await new Promise((resolve) => child.once('spawn', resolve));
+    const identity = await processIdentity(child.pid);
+    assert.ok(identity, 'identity is available');
+    assert.ok(identity.command.length > 16, `command must not be truncated, got ${identity.command}`);
+    if (process.platform === 'darwin') assert.equal(identity.command, link);
+    else assert.ok(path.isAbsolute(identity.command), 'command is an absolute path');
+  } finally {
+    if (child?.pid) child.kill('SIGKILL');
     rmSync(directory, { recursive: true, force: true });
   }
 });

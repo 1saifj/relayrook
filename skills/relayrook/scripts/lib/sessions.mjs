@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { callControl, pingControl } from './control.mjs';
 import { EventLog, SessionStore, listSessionKeys } from './state.mjs';
 import { fail, ERROR_CODES } from './errors.mjs';
+import { defaultPermissionMode, isUngated, resolvePermissionPosture } from './permissions.mjs';
 import { getBackend } from './backends.mjs';
 import { sessionKey, sleep, redactPath } from './util.mjs';
 import { resolveClaudeAdapter, whichSync } from './discovery.mjs';
@@ -123,6 +124,8 @@ function commandNamesMatch(observed, expected) {
  *   model?: string|null,
  *   effort?: string|null,
  *   profile?: string,
+ *   permissionMode?: string|null,
+ *   role?: string|null,
  *   codex?: {sandbox?: string, approvalPolicy?: string},
  *   caller?: any,
  *   route?: any,
@@ -146,12 +149,24 @@ export async function startSession(spec) {
   }
 
   const workspace = path.resolve(spec.workspace);
+  const permissionMode =
+    spec.permissionMode ?? defaultPermissionMode({ role: spec.role ?? null, profile: spec.profile ?? null });
+  // A read-only role that cannot be enforced is a contradiction, not a
+  // preference: refuse rather than start a reviewer that may write.
+  if ((spec.role === 'code-review' || spec.role === 'security-review') && isUngated(permissionMode)) {
+    throw fail(
+      ERROR_CODES.role_posture_mismatch,
+      `Role ${spec.role} cannot run with permission mode ${permissionMode}`,
+      { role: spec.role, permissionMode },
+    );
+  }
   const key = sessionKey({
     backend: spec.backend,
     workspace,
     model: spec.model ?? backend.defaultModel ?? null,
     effort: spec.effort ?? null,
     profile: spec.profile ?? 'default',
+    permissionMode,
   });
   const store = new SessionStore(spec.stateDir, key).ensure();
   const startTimeoutMs = spec.startTimeoutMs ?? 120000;
@@ -206,10 +221,23 @@ export async function startSession(spec) {
         ? { nativeSessionId: previousSessionId, policy: resumePolicy }
         : null;
 
+    // Permission posture: the backend's own lever where it has one, plus an
+    // honest record of what actually holds the posture.
+    const posture = resolvePermissionPosture({
+      backend: spec.backend,
+      mode: permissionMode,
+      sessionDir: store.dir,
+      codexOverrides: spec.codex ?? null,
+    });
+    if (posture.configFile) {
+      writeFileSync(posture.configFile.path, posture.configFile.contents, { mode: 0o600 });
+    }
+
     const override = backendCommandOverride(spec.backend, process.env);
     const launch = resolveLaunchCommand(backend, spec.stateDir, override, {
       ...process.env,
       ...(spec.env ?? {}),
+      ...posture.env,
     });
 
     const request = {
@@ -219,10 +247,22 @@ export async function startSession(spec) {
       model: spec.model ?? null,
       effort: spec.effort ?? null,
       profile: spec.profile ?? 'default',
-      codex: spec.codex ?? null,
+      codex: posture.codex ?? spec.codex ?? null,
+      permissionMode,
+      permissionArgs: posture.args,
+      permissions: {
+        mode: posture.mode,
+        mechanism: posture.mechanism,
+        enforcement: posture.enforcement,
+        note: posture.note,
+        requestedUnsupported: posture.requestedUnsupported,
+        appliedEnv: Object.keys(posture.env),
+        appliedArgs: posture.args,
+        codex: posture.codex,
+      },
       caller: spec.caller ?? null,
       route: spec.route ?? null,
-      env: spec.env ?? {},
+      env: { ...(spec.env ?? {}), ...posture.env },
       resume,
       previousSessions,
       idleTimeoutMs: spec.idleTimeoutMs,

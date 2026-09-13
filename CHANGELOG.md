@@ -26,6 +26,34 @@ that was actively streaming at minute 21 was killed and reported as
 - **`extend`** changes the budget of a turn already in flight, so a reported
   stall or an approaching deadline no longer forces a re-prompt.
 
+### Permission postures
+
+`start --permission-mode read-only|gated|auto-edits|full-auto` maps one
+vocabulary onto each backend's own permission system, and the session reports
+which mechanism actually holds the posture — `backend-sandbox`, `parent-gated`
+or `prompt-only` — so a caller is never told a session is read-only when only
+the prompt says so.
+
+- Devin read-only launches `devin acp --agent-type review`, an agent with no
+  edit tool, and sets `DEVIN_PERMISSION_MODE`; OpenCode postures are written as
+  an `OPENCODE_CONFIG` permission file in the session directory; Claude uses
+  `ACP_PERMISSION_MODE`; Codex keeps the sandbox and approval-policy mapping.
+- Kiro reports `auto-edits` as `requestedUnsupported` rather than pretending:
+  it trusts tools by name, not by category.
+- The posture is part of the session key, so reusing a warm worker can never
+  widen what a delegated agent may do, and review roles refuse to start with an
+  ungated mode.
+- `references/providers.md` documents each backend's lever; `SKILL.md` says
+  when to pick each mode and how to decide a single permission request.
+
+### Fixed
+
+- **Orphan cleanup could kill an unrelated process.** On macOS, process
+  identity was read with `ps -o comm= -o lstart=`, and BSD `ps` pads every
+  column but the last — so the recorded command was truncated to 16 characters
+  and two different binaries in the same directory compared equal. Identity now
+  reads `comm` last and keeps the whole path.
+
 ## 0.2.1
 
 Agent-host discovery uses `doctor --compact`, a stable small schema containing

@@ -9,6 +9,7 @@
  *   BIG              emit a text chunk larger than the per-event cap
  *   SLOW             stay running until cancelled or the turn times out
  *   HEARTBEAT        stream a thought chunk every FAKE_ACP_HEARTBEAT_MS forever
+ *   LAUNCH_REPORT    reply with the argv tail and permission env vars it was launched with
  *   REFUSE           finish with stopReason "refusal"
  *   NO_STOP_REASON   return a result with no stopReason at all
  *
@@ -155,6 +156,23 @@ async function runPrompt(id, params) {
 
   if (text.includes('NO_STOP_REASON')) {
     send({ id, result: { usage: { totalTokens: 1 } } });
+    activePrompt = null;
+    return;
+  }
+
+  if (text.includes('LAUNCH_REPORT')) {
+    // Proves what actually reached the process: argv tail plus the permission
+    // env vars RelayRook claims to have set.
+    const report = {
+      argv: process.argv.slice(2),
+      env: {
+        DEVIN_PERMISSION_MODE: process.env.DEVIN_PERMISSION_MODE ?? null,
+        ACP_PERMISSION_MODE: process.env.ACP_PERMISSION_MODE ?? null,
+        OPENCODE_CONFIG: process.env.OPENCODE_CONFIG ?? null,
+      },
+    };
+    update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: JSON.stringify(report) } });
+    send({ id, result: { stopReason: 'end_turn' } });
     activePrompt = null;
     return;
   }
