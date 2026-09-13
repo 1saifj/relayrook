@@ -13,7 +13,8 @@
   <a href="#installation">Installation</a> ·
   <a href="#commands">Commands</a> ·
   <a href="#roadmap">Roadmap</a> ·
-  <a href="docs/research.md">Research</a>
+  <a href="docs/research.md">Research</a> ·
+  <a href="https://www.skills.sh/1saifj/relayrook/relayrook">skills.sh</a>
 </p>
 
 ---
@@ -90,7 +91,13 @@ npx skills add 1saifj/relayrook --skill relayrook \
   --agent codex claude-code kiro-cli opencode devin
 ```
 
-The public repository is not published yet, so this command is not live. Until then, copy `skills/relayrook/` anywhere and run its entrypoint directly — the directory is self-contained and needs no checkout:
+This repository and its skills.sh page are live. To install RelayRook globally for every host recognized by the installer:
+
+```bash
+npx skills add 1saifj/relayrook --skill relayrook --agent '*' --global --yes --copy
+```
+
+You can also copy `skills/relayrook/` anywhere and run its entrypoint directly — the directory is self-contained and needs no checkout:
 
 ```bash
 node skills/relayrook/scripts/relayrook.mjs doctor --caller claude-code
@@ -191,7 +198,7 @@ npm run check      # all three
 - [ ] Implement Codex app-server thread and turn control, including `review/start`.
 - [ ] Evaluate implementation quality and review accuracy on held-out tasks.
 - [ ] Verify skill installation and behavior in every supported host.
-- [ ] Publish the first release under `1saifj/relayrook` and verify skills.sh discovery.
+- [x] Publish the first release under `1saifj/relayrook` and verify skills.sh discovery and installation.
 
 ## Research & contributions
 
