@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 
 import { flagBool, flagList, flagNumber, flagString, parseArgs, requireFlag } from './args.mjs';
 import { fail, ERROR_CODES, toErrorEnvelope } from './errors.mjs';
@@ -129,7 +129,9 @@ export async function main(argv, io = {}) {
 
   try {
     const result = await dispatch(command, flags, positionals.slice(1), env);
-    stdout.write(`${JSON.stringify({ ok: true, command, ...result }, null, 2)}\n`);
+    // `ok` and `command` come last: a payload that happens to carry an `ok`
+    // field must not turn a successful command into a reported failure.
+    stdout.write(`${JSON.stringify({ ...result, ok: true, command }, null, 2)}\n`);
     return 0;
   } catch (err) {
     const envelope = toErrorEnvelope(err);
@@ -333,7 +335,10 @@ async function dispatch(command, flags, rest, env) {
     case 'parse-result': {
       const file = flagString(flags, 'file');
       const text = file ? readFileSync(path.resolve(file), 'utf8') : (flagString(flags, 'text') ?? rest.join(' '));
-      return parseResultBlock(text);
+      const parsed = parseResultBlock(text);
+      // A reply without a result block is a finding about the reply, not a
+      // failure of this command.
+      return { found: parsed.ok, status: parsed.status, reason: parsed.reason ?? null, result: parsed.result ?? null };
     }
 
     default:
@@ -398,6 +403,25 @@ async function resolveCallerState(flags, env, stateDir) {
  * that cannot poll.
  * @param {Record<string, any>} flags
  */
+/**
+ * @param {string} workspace
+ */
+function assertWorkspace(workspace) {
+  let stats;
+  try {
+    stats = statSync(workspace);
+  } catch {
+    throw fail(ERROR_CODES.usage, `Workspace does not exist: ${redactPath(workspace)}`, {
+      workspace: redactPath(workspace),
+    });
+  }
+  if (!stats.isDirectory()) {
+    throw fail(ERROR_CODES.usage, `Workspace is not a directory: ${redactPath(workspace)}`, {
+      workspace: redactPath(workspace),
+    });
+  }
+}
+
 function stallAction(flags) {
   const value = flagString(flags, 'stall-action') ?? 'report';
   if (value !== 'report' && value !== 'cancel') {
@@ -471,6 +495,10 @@ async function commandRoute(flags, stateDir, env) {
  */
 async function commandStart(flags, stateDir, env) {
   const workspace = path.resolve(flagString(flags, 'workspace') ?? process.cwd());
+  // Checked before anything is spawned: a backend started in a directory that
+  // does not exist fails with ENOENT against the backend's own path, which
+  // reads as "the CLI is missing" and sends the caller after the wrong problem.
+  assertWorkspace(workspace);
   const callerState = await resolveCallerState(flags, env, stateDir);
   const role = flagString(flags, 'role') ?? null;
 

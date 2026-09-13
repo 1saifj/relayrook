@@ -53,3 +53,31 @@ test('an agent host can discover compactly and select with route without parsing
     rmSync(tmp, { recursive: true, force: true });
   }
 });
+
+test('a command payload cannot turn a success envelope into a failure', async () => {
+  const out = capture();
+  const err = capture();
+  const code = await main(['parse-result', '--text', 'a reply with no result block'], {
+    stdout: out.stream,
+    stderr: err.stream,
+    env: {},
+  });
+  const response = out.json();
+  assert.equal(code, 0);
+  assert.equal(response.ok, true, 'the command succeeded');
+  assert.equal(response.found, false, 'and reports that the reply carried no block');
+  assert.equal(response.status, 'incomplete');
+});
+
+test('a workspace that does not exist is a usage error, not a backend spawn failure', async () => {
+  const out = capture();
+  const err = capture();
+  const code = await main(
+    ['start', '--backend', 'devin', '--workspace', path.join(os.tmpdir(), 'relayrook-no-such-workspace'), '--caller', 'codex'],
+    { stdout: out.stream, stderr: err.stream, env: {} },
+  );
+  assert.equal(code, 1);
+  const envelope = err.json();
+  assert.equal(envelope.error.code, 'usage');
+  assert.match(envelope.error.message, /Workspace does not exist/);
+});

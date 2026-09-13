@@ -9,7 +9,7 @@
     "backends.mjs": "57f73bd83af73981fb2208457ad3210cae1af5ee663687a2d8a2dbb386e25ec5",
     "bootstrap.mjs": "4047a71488781a945248fd57a47631b8be81e56d58567939e8804d863cc1cea9",
     "caller.mjs": "95e2acef500155e588aaededaa441ca7fc9651a26e29982fe15ee00cd4c9561c",
-    "cli.mjs": "ff7e3284d73ad80a9d247f29461f51cb7c3c2ba19ef68c1c6ea57227e65f87bb",
+    "cli.mjs": "d08e0667b7f6a86060c6ca8db00d6bdc4606dea3b4e3077fb323db0f9eed6ae9",
     "control.mjs": "554eb12cb43d13b0b2bae84e841befc6e40a9de938bb242d5db30d6e4a912c70",
     "data/routes.json": "0b9ac22a401f642a972b9ebfac561e48f1a66877c997e09e3cf70ea9161ed293",
     "discovery.mjs": "2e7402d430e6f0d618b3dda43b3c1712fffea5f6c7c58dc5a5ce891049fdea00",

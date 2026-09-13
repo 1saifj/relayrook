@@ -48,6 +48,15 @@ the prompt says so.
 
 ### Fixed
 
+- **A command's own `ok` field could overwrite the success envelope.** The CLI
+  built its response as `{ok: true, ...result}`, so `parse-result` on a reply
+  with no result block returned `ok: false` with exit code 0 — a host reading
+  `.ok` saw a failed command, a host reading the exit code saw success. The
+  envelope is now authoritative and `parse-result` reports `found`.
+- **A missing workspace was blamed on the backend.** `start --workspace` into a
+  directory that does not exist failed with `spawn /path/to/devin ENOENT`,
+  which reads as a missing CLI. The workspace is checked before anything is
+  spawned.
 - **Orphan cleanup could kill an unrelated process.** On macOS, process
   identity was read with `ps -o comm= -o lstart=`, and BSD `ps` pads every
   column but the last — so the recorded command was truncated to 16 characters

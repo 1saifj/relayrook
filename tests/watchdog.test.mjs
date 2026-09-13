@@ -182,19 +182,21 @@ test('waiting on a permission is not silence', async () => {
     stateDir: ctx.stateDir,
     key: ctx.key,
     text: 'PERMISSION_WAIT_FOR_RESPONSE',
-    stallTimeoutMs: 200,
-    stallAction: 'cancel',
+    stallTimeoutMs: 300,
     timeoutMs: 0,
   });
 
   const paused = await waitSession({ stateDir: ctx.stateDir, key: ctx.key, timeoutMs: 10000 });
   assert.equal(paused.waitOutcome, 'awaiting-permission');
 
-  // Several stall windows pass while the parent thinks about the request.
-  await sleep(800);
+  // Several stall windows pass while the parent thinks about the request. The
+  // pause suspends the inactivity clock outright, so no stall is ever counted
+  // — that holds however slow the machine is.
+  await sleep(1200);
   const stillPaused = await statusSession({ stateDir: ctx.stateDir, key: ctx.key });
   assert.equal(stillPaused.turn.state, 'awaiting-permission');
   assert.equal(stillPaused.turn.watchdog.stalled, false);
+  assert.equal(stillPaused.turn.watchdog.stallCount, 0);
 
   const request = stillPaused.pendingPermissions[0];
   await answerPermission({
@@ -208,6 +210,7 @@ test('waiting on a permission is not silence', async () => {
     key: ctx.key,
     turnId: submitted.turnId,
     timeoutMs: 10000,
+    stopOnStall: false,
   });
   assert.equal(finished.turn.state, 'completed');
 });
