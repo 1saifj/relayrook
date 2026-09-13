@@ -421,6 +421,24 @@ test('legacy Kiro model metadata is honoured end to end', async () => {
   }
 });
 
+/**
+ * Windows keeps a handle on a process's working directory, so a workspace can
+ * still be locked for a moment after the backend is gone. Cleanup retries
+ * rather than failing a test that already made its point.
+ * @param {string} dir
+ */
+async function removeWhenFree(dir) {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+      return;
+    } catch (err) {
+      if (attempt === 19) throw err;
+      await sleep(100);
+    }
+  }
+}
+
 test('a rejected resume starts fresh instead of locking the caller out', async () => {
   // The stub advertises `loadSession` and then refuses `session/load`, which
   // is what a real agent does when its stored session has expired. With
@@ -448,8 +466,8 @@ test('a rejected resume starts fresh instead of locking the caller out', async (
     );
     await stopSession({ stateDir, key: second.key });
   } finally {
-    rmSync(stateDir, { recursive: true, force: true });
-    rmSync(workspace, { recursive: true, force: true });
+    await removeWhenFree(stateDir);
+    await removeWhenFree(workspace);
   }
 });
 
@@ -467,7 +485,7 @@ test('resume:required still fails closed when the backend refuses', async () => 
         err.code === 'worker_start_failed',
     );
   } finally {
-    rmSync(stateDir, { recursive: true, force: true });
-    rmSync(workspace, { recursive: true, force: true });
+    await removeWhenFree(stateDir);
+    await removeWhenFree(workspace);
   }
 });
