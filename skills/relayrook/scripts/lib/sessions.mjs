@@ -538,11 +538,21 @@ export function answerPermission(input) {
 /** @param {{stateDir: string, key: string}} input */
 export async function stopSession(input) {
   const store = storeFor(input.stateDir, input.key);
+  const workerPid = store.readMeta()?.pid;
+  const waitStopped = async () => {
+    const deadline = Date.now() + 15000;
+    while (pidAlive(workerPid)) {
+      if (Date.now() >= deadline) throw fail(ERROR_CODES.state_error, 'Worker shutdown did not finish within 15 seconds');
+      await sleep(25);
+    }
+  };
   try {
     const result = await callControl(store.socketPath, 'stop', {}, { timeoutMs: 15000, token: controlToken(store) });
-    return { ...result, key: input.key };
+    await waitStopped();
+    return { ...result, stopping: false, stopped: true, key: input.key };
   } catch (err) {
     if (err && typeof err === 'object' && err.code === ERROR_CODES.session_not_running) {
+      await waitStopped();
       return { ok: true, stopping: false, alreadyStopped: true, key: input.key };
     }
     throw err;

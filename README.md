@@ -191,7 +191,7 @@ docs/                         research, compatibility, inventory, evaluation pla
 ```bash
 npm run lint       # formatting plus a hygiene scan for paths, e-mails, and tokens
 npm run typecheck  # TypeScript over JSDoc-annotated ESM
-npm test           # 159 tests, including the full session lifecycle on both protocols
+npm test           # unit, protocol lifecycle, packaging, and platform checks
 npm run check      # all three
 ```
 
@@ -207,7 +207,7 @@ npm run check      # all three
 - [x] Add capability preflight, typed unavailable-execution errors, signed delegation envelopes, and control-token authentication.
 - [x] Evaluate implementation quality and review accuracy on held-out tasks via `evals/run.mjs`.
 - [ ] Add a generic quality/balanced/speed routing objective once measured evidence spans multiple eligible routes per role.
-- [ ] Verify skill installation and behavior in every supported host.
+- [x] Verify installed-skill delegation from Codex, Claude Code, Kiro, OpenCode, and Devin on macOS.
 - [x] Publish the first release under `1saifj/relayrook` and verify skills.sh discovery and installation.
 
 ## Research & contributions

@@ -1,5 +1,5 @@
 {
-  "status": "fixtures and runner shipped; executed on codex, repeatable per backend",
+  "status": "isolated fixture runner; repeated backend evidence recorded separately",
   "trigger_cases": [
     {
       "prompt": "Use the best installed coding agent to implement the pagination fix.",

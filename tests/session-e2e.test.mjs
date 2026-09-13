@@ -316,6 +316,10 @@ test('a turn timeout is reported as timed-out, not as a completion', async () =>
   const finished = await waitSession({ stateDir: ctx.stateDir, key: ctx.key, timeoutMs: 20000, pollMs: 100 });
   assert.equal(finished.turn.state, 'timed-out');
   assert.equal(finished.turn.stopReason, 'relayrook_timeout');
+  const turnDir = new SessionStore(ctx.stateDir, ctx.key).turnDir(finished.turn.id);
+  const persisted = JSON.parse(readFileSync(path.join(turnDir, 'result.json'), 'utf8'));
+  assert.equal(persisted.state, 'timed-out');
+  assert.equal(persisted.finishedAt, finished.turn.finishedAt);
 });
 
 test('cancel with no active turn is a typed error', async () => {
@@ -337,11 +341,7 @@ test('stop shuts the worker down and state stays readable afterwards', async () 
   const stopped = await stopSession({ stateDir: ctx.stateDir, key: ctx.key });
   assert.equal(stopped.ok, true);
 
-  for (let i = 0; i < 40; i += 1) {
-    const sessions = await listSessions(ctx.stateDir);
-    if (sessions.find((s) => s.key === ctx.key)?.alive === false) break;
-    await sleep(100);
-  }
+  assert.equal(stopped.stopped, true);
 
   const offline = await statusSession({ stateDir: ctx.stateDir, key: ctx.key, cursor: 0, limit: 5 });
   assert.equal(offline.offline, true);

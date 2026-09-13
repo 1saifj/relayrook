@@ -48,7 +48,7 @@ test('uncached input is computed arithmetically, not read from a field', () => {
 
 test('fields a provider never reports stay null, not zero', () => {
   const r = normalizeUsage('codex', { total: { inputTokens: 10 } });
-  assert.equal(r.uncachedInputTokens, 10);
+  assert.equal(r.uncachedInputTokens, null);
   assert.equal(r.cachedInputTokens, null);
   assert.equal(r.outputTokens, null);
   assert.equal(r.reasoningOutputTokens, null);
@@ -96,6 +96,26 @@ test('caller-known fields attach: event count, latency, rate-limit snapshot', ()
 });
 
 test('hasUsageData distinguishes reported zeros from absent data', () => {
-  assert.equal(hasUsageData(normalizeUsage('codex', { total: { inputTokens: 0 } })), true);
+  assert.equal(hasUsageData(normalizeUsage('codex', { total: { inputTokens: 0, cachedInputTokens: 0 } })), true);
   assert.equal(hasUsageData(normalizeUsage('codex', null)), false);
+});
+
+
+test('observed Devin cachedReadTokens are deducted from inclusive input usage', () => {
+  const raw = { inputTokens: 21469, cachedReadTokens: 20377, outputTokens: 612, totalTokens: 22081 };
+  const r = normalizeUsage('devin', raw);
+  assert.equal(r.cachedInputTokens, 20377);
+  assert.equal(r.uncachedInputTokens, 1092);
+  assert.equal(r.raw, raw);
+});
+
+test('missing cache counts never imply all input was uncached', () => {
+  for (const backend of ['devin', 'codex', 'kiro', 'claude', 'opencode']) {
+    assert.equal(normalizeUsage(backend, { inputTokens: 100 }).uncachedInputTokens, null);
+  }
+  assert.equal(normalizeUsage('devin', { inputTokens: 100, cachedReadTokens: 0 }).uncachedInputTokens, 100);
+});
+
+test('explicit uncached input remains known without a cache count', () => {
+  assert.equal(normalizeUsage('claude', { uncached_input_tokens: 12 }).uncachedInputTokens, 12);
 });

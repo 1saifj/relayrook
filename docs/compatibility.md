@@ -28,7 +28,6 @@ Observed on September 13, 2026, on one macOS machine. This records the underlyin
 
 ## What remains unverified
 
-- RelayRook skill discovery and execution from each parent host.
 - Live permission and cancellation behavior on every backend; the common protocol lifecycle is covered by deterministic tests.
 - Model-quality rankings for implementation, code review, and security review; `evals/run.mjs` produces measured evidence where credentials permit.
 - Live multi-backend behavior on Linux and Windows; CI covers the runtime's own tests and both control transports on all three platforms.
@@ -45,4 +44,35 @@ The Kiro and OpenCode smoke prompts asked for `ROUTER_READY` without tools. Both
 - [acpx runtime](https://github.com/openclaw/acpx)
 - [Agent Skills specification](https://agentskills.io/specification)
 
-See the [research report](research.md) for the planned adapter architecture and the [evaluation plan](evaluation-plan.json) for proposed behavioral checks.
+See the [research report](research.md) for protocol decisions and the [evaluation plan](evaluation-plan.json) for behavioral checks.
+
+## Installed parent hosts
+
+The 0.2.0 candidate completed these delegations on macOS on 2026-09-13.
+Each parent read an installed self-contained skill, passed its own caller id,
+collected a completed child turn, and stopped the child.
+
+| Parent | Parent control interface | Delegated backend | Outcome |
+|---|---|---|---|
+| Codex CLI | `exec` JSONL | Devin `swe-2-max` | completed, stopped |
+| Claude Code | print stream JSON | Devin `swe-2-max` | completed, stopped |
+| Kiro CLI | v3 chat stream JSON | Devin `swe-2-max` | completed, stopped |
+| OpenCode Go | `run` JSON, `kimi-k2.7-code` | Devin `swe-2-max` | completed, stopped |
+| Devin | print | Kiro, observed `gpt-5.6-terra` | completed, stopped |
+
+These are discovery and delegation smoke tests. The live turns used candidate
+builds; installed copies were refreshed after subsequent runtime fixes. They
+do not establish compatibility with every version, host configuration, or OS.
+
+An existing global skill can take precedence over a project skill with the same
+name. Confirm the selected entrypoint's `version` after installation. Back up
+and update older copies when validating a candidate. The installed Kiro CLI
+requires its v3 engine for stream JSON. Noninteractive parent harnesses need
+permission to execute the packaged runtime and the requested task's tools;
+RelayRook cannot grant permissions withheld by the parent. Interactive approval
+is preferable to broadly changing a user's global trust configuration.
+
+Use `wait --full` to collect an unstructured answer. Reading transcript files
+outside the workspace can be blocked by the parent even when RelayRook's own
+control commands are permitted. Use role-built prompts when a structured
+result contract is required; raw `--text` does not insert that contract.

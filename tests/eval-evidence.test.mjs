@@ -101,3 +101,14 @@ test('evaluation starts the session with the requested review posture', async ()
   const args = sessionStartArgs('codex', '/workspace', 'security-review', 'eval-runner', '/state');
   assert.equal(args[args.indexOf('--role') + 1], 'security-review');
 });
+
+
+test('informational observations do not count as scored vulnerabilities', async () => {
+  const { scoreFindings } = await import('../evals/run.mjs');
+  const scores = scoreFindings([{ path: 's.mjs', line: 10 }, { path: 's.mjs', line: 31 }],
+    [{ id: 'sql', path: 's.mjs', line: 10 }], [{ path: 's.mjs', line: 31 }]);
+  assert.equal(scores.truePositives, 1);
+  assert.equal(scores.unscoredObservations, 1);
+  assert.equal(scores.precision, 1);
+  assert.equal(scores.recall, 1);
+});

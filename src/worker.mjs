@@ -55,6 +55,7 @@ export class SessionWorker {
     this.server = null;
     /** @type {any} */
     this.turn = null;
+    this.drivePending = false;
     /** @type {Map<string, {request: any, resolve: (d: any) => void}>} */
     this.pendingPermissions = new Map();
     this.idleTimer = null;
@@ -367,6 +368,7 @@ export class SessionWorker {
 
   /** @param {any} update */
   #onUpdate(update) {
+    if (this.turn?.finishedAt) return;
     const kind = update?.sessionUpdate ?? 'unknown';
     if (kind === 'agent_notification' && update?.method === '_kiro.dev/metadata') {
       const observed = update?.params?.effort ?? null;
@@ -460,6 +462,7 @@ export class SessionWorker {
    * @param {any} request
    */
   #onPermissionRequest(request) {
+    if (this.stopping || this.turn?.finishedAt) return Promise.resolve({ cancelled: true });
     const requestId = request?.requestId ?? request?.toolCall?.toolCallId ?? newId();
     const normalised = { ...request, requestId };
     if (this.turn) this.turn.state = 'awaiting-permission';
@@ -546,7 +549,7 @@ export class SessionWorker {
    */
   async #startTurn(params) {
     this.#resetIdleTimer();
-    if (this.turn && (this.turn.state === 'running' || this.turn.state === 'awaiting-permission')) {
+    if (this.drivePending || (this.turn && (this.turn.state === 'running' || this.turn.state === 'awaiting-permission'))) {
       throw fail(ERROR_CODES.active_turn, 'A turn is already active on this session', {
         turnId: this.turn.id,
         state: this.turn.state,
@@ -589,10 +592,11 @@ export class SessionWorker {
       for (const [, pending] of this.pendingPermissions) pending.resolve({ cancelled: true });
       this.turn.state = 'timed-out';
       this.turn.stopReason = 'relayrook_timeout';
-      this.#saveMeta();
+      this.#finishTurn(turnId, null, fail(ERROR_CODES.turn_timeout, 'Turn exceeded its timeout'));
     }, timeoutMs);
     timer.unref?.();
 
+    this.drivePending = true;
     const drive = params.review ? this.connection.review(params.review) : this.connection.prompt(params.text);
     if (this.connection.activeTurnId) this.turn.nativeTurnId = this.connection.activeTurnId;
     drive
@@ -600,7 +604,10 @@ export class SessionWorker {
         (result) => this.#finishTurn(turnId, result, null),
         (err) => this.#finishTurn(turnId, null, err),
       )
-      .finally(() => clearTimeout(timer));
+      .finally(() => {
+        this.drivePending = false;
+        clearTimeout(timer);
+      });
 
     return { turnId, state: 'running', startedAt: this.turn.startedAt };
   }
@@ -675,7 +682,7 @@ export class SessionWorker {
    * @param {any} err
    */
   #finishTurn(turnId, result, err) {
-    if (!this.turn || this.turn.id !== turnId) return;
+    if (!this.turn || this.turn.id !== turnId || this.turn.finishedAt) return;
     const turn = this.turn;
     turn.finishedAt = new Date(this.now()).toISOString();
 

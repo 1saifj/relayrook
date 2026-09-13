@@ -176,7 +176,7 @@ test('evals reject an unknown backend id instead of silently skipping', async ()
 
 // F10 — the predictable shared-temp socket dir fails closed: a path that is
 // not a private user-owned 0700 directory is a typed error, never trusted.
-test('assertPrivateSocketDir rejects anything that is not a private directory', () => {
+test('assertPrivateSocketDir rejects anything that is not a private directory', { skip: IS_WINDOWS }, () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'relayrook-rf-priv-'));
   try {
     chmodSync(dir, 0o700);

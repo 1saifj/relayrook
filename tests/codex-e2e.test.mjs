@@ -105,7 +105,7 @@ test('a prompt runs to a completed turn with the protocol stop reason', async ()
   const usage = finished.turn.usage;
   assert.equal(usage.backend, 'codex');
   assert.equal(usage.totalTokens, 10);
-  assert.equal(usage.uncachedInputTokens, 8);
+  assert.equal(usage.uncachedInputTokens, null);
   assert.equal(usage.outputTokens, 2);
   assert.equal(usage.cachedInputTokens, null);
   assert.equal(usage.eventCount, 1);

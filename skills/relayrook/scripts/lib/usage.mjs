@@ -50,14 +50,17 @@ export function normalizeUsage(backendId, raw, extra = {}) {
   const totals = raw?.total && typeof raw.total === 'object' ? raw.total : raw ?? {};
 
   const input = pick(totals, 'inputTokens', 'input_tokens');
-  const cached = pick(totals, 'cachedInputTokens', 'cached_input_tokens');
+  const cached = pick(totals, 'cachedInputTokens', 'cached_input_tokens') ??
+    (backendId === 'devin' ? pick(totals, 'cachedReadTokens', 'cached_read_tokens') : null);
   const cacheWrite = pick(totals, 'cacheWriteInputTokens', 'cache_write_input_tokens');
   const contextUsed = pick(raw, 'used', 'used') ?? pick(totals, 'used', 'used');
   const contextWindow = num(raw?.modelContextWindow) ?? pick(raw, 'size', 'size');
 
   const record = {
     backend: backendId,
-    uncachedInputTokens: input === null ? null : Math.max(0, input - (cached ?? 0) - (cacheWrite ?? 0)),
+    // Missing cache-read usage does not establish that all input was uncached.
+    uncachedInputTokens: pick(totals, 'uncachedInputTokens', 'uncached_input_tokens') ??
+      (input === null || cached === null ? null : Math.max(0, input - cached - (cacheWrite ?? 0))),
     cachedInputTokens: cached,
     cacheWriteInputTokens: cacheWrite,
     outputTokens: pick(totals, 'outputTokens', 'output_tokens'),

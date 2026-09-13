@@ -16,18 +16,30 @@
       "line": 19,
       "severity": "high",
       "summary": "readSecret joins an unvalidated name onto VAULT_DIR; ../ segments escape the vault root."
-    },
-    {
-      "id": "timing-compare",
-      "path": "secrets.mjs",
-      "line": 33,
-      "severity": "medium",
-      "summary": "tokensMatch compares secrets with ===, a non-constant-time equality that leaks match length through timing."
     }
   ],
   "cleanRegions": [
-    { "path": "secrets.mjs", "line": 14, "note": "lookupUserSafe is parameterized; not injectable." },
-    { "path": "secrets.mjs", "line": 23, "note": "readScopedSecret resolves and confines the path; not a traversal." },
-    { "path": "secrets.mjs", "line": 37, "note": "signaturesMatch uses an HMAC plus timingSafeEqual; not a timing oracle." }
+    {
+      "path": "secrets.mjs",
+      "line": 14,
+      "note": "lookupUserSafe is parameterized; not injectable."
+    },
+    {
+      "path": "secrets.mjs",
+      "line": 23,
+      "note": "readScopedSecret resolves and confines the path; not a traversal."
+    },
+    {
+      "path": "secrets.mjs",
+      "line": 37,
+      "note": "signaturesMatch uses an HMAC plus timingSafeEqual; not a timing oracle."
+    }
+  ],
+  "unscoredObservations": [
+    {
+      "path": "secrets.mjs",
+      "line": 31,
+      "note": "Non-constant-time string comparison is informational unless an exploitable timing oracle is demonstrated."
+    }
   ]
 }

@@ -134,7 +134,11 @@ function listFixtures(flags) {
 }
 
 /** Match reported findings to seeded findings by path basename and line proximity. */
-function scoreFindings(reported, seeds) {
+export function scoreFindings(reported, seeds, unscored = []) {
+  const observations = (reported ?? []).filter((finding) => unscored.some((item) =>
+    String(finding?.path ?? '').split('/').pop() === String(item.path).split('/').pop() &&
+    Number.isFinite(Number(finding?.line)) && Math.abs(Number(finding.line) - item.line) <= LINE_TOLERANCE));
+  reported = (reported ?? []).filter((finding) => !observations.includes(finding));
   const used = new Set();
   const matched = [];
   const unmatched = [];
@@ -151,6 +155,7 @@ function scoreFindings(reported, seeds) {
   const missed = (seeds ?? []).filter((_, i) => !used.has(i)).map((s) => s.id);
   const reportedCount = (reported ?? []).length;
   return {
+    unscoredObservations: observations.length,
     truePositives: matched.length,
     falsePositives: unmatched.length,
     missed,
@@ -282,7 +287,7 @@ async function runFixture(fixture, backend, flags, runIndex) {
         ? (record.scopeViolations.length ? `out-of-scope edits: ${record.scopeViolations.join(',')}` : null)
         : `check failed: ${check.output.slice(0, 200)}`;
     } else {
-      record.scores = scoreFindings(findings, fixture.spec.findings ?? []);
+      record.scores = scoreFindings(findings, fixture.spec.findings ?? [], fixture.spec.unscoredObservations ?? []);
       const after = hashDir(workspace);
       record.scopeViolations = changedFiles(pristine, after);
       record.scopeCompliant = record.scopeViolations.length === 0;
