@@ -40,16 +40,18 @@ separately.
 
 ## Procedure
 
-1. **Check the environment.** `doctor` reports the caller, installed backends,
-   adapter readiness and configured routes. `preflight` runs the capability
-   checks (process spawn, state dir, transport, backend executable) without
-   starting anything. Run `doctor` before the first delegation in a session.
+1. **Check the environment once.** Run `doctor --compact --caller <your-id>`
+   before the first delegation in a session. Its `backends` and `routes` fields
+   are JSON arrays. Use full `doctor` only for diagnosis and `doctor --probe`
+   only when live protocol evidence is needed. `preflight` checks process
+   spawn, state, transport and a requested backend without starting a session.
 2. **Pass `--caller`.** Environment variables are inherited by child processes,
    so they cannot prove who invoked you. Your own host id is the only
    authoritative value. Known ids: `codex`, `claude-code`, `kiro-cli`,
    `opencode`, `devin`; any normalized id (lowercase `[a-z0-9_-]`, max 64
    chars) is accepted for hosts RelayRook does not know.
-3. **Choose a route.** `route --role <role>` returns a backend, model, effort,
+3. **Choose a route with `route`; do not parse `doctor` to select one.**
+   `route --role <role>` returns a backend, model, effort,
    the rejected candidates and the reason. Forward the user's pins with
    `--agent`, `--model`, `--effort`. An unsatisfiable pin is an error — never
    silently substitute a different agent, model, effort or billing route.
@@ -88,6 +90,9 @@ asked for the reviewer to change code.
 ## Minimal delegation
 
 ```bash
+"$SKILL/bin/relayrook" doctor --compact --caller claude-code
+"$SKILL/bin/relayrook" route --role implementation --caller claude-code
+
 S=$("$SKILL/bin/relayrook" start --role implementation \
       --workspace "$PWD" --caller claude-code | jq -r .session)
 

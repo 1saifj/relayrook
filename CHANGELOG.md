@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.1
+
+Agent-host discovery uses `doctor --compact`, a stable small schema containing
+caller identity, readiness, backend arrays, configured route summaries,
+warnings, and active-session summaries. Route selection stays in `route
+--role`; hosts no longer need to parse the diagnostic doctor report or infer
+its collection shapes. The supported global installation command names the
+five RelayRook hosts explicitly so the installer does not include agents that
+lack global skill directories.
+
 ## 0.2.0
 
 The cross-harness release: every supported CLI runs through persistent

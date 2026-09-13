@@ -77,7 +77,7 @@ export {
   MIN_NODE_VERSION,
 } from './preflight.mjs';
 export { discoverAll, discoverBackend, whichSync, probeVersion, extractVersion, ProbeCache } from './discovery.mjs';
-export { runDoctor, parentProcessInfo } from './doctor.mjs';
+export { runDoctor, compactDoctorReport, parentProcessInfo } from './doctor.mjs';
 export { bootstrapAdapter } from './bootstrap.mjs';
 export { AcpConnection, CLIENT_CAPABILITIES, PROTOCOL_VERSION } from './adapters/acp.mjs';
 export { CodexAppServerConnection, probeCodex, codexProfilePolicies, CODEX_CLIENT_INFO } from './adapters/codex.mjs';

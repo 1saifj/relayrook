@@ -28,7 +28,7 @@ import {
   waitSession,
 } from './sessions.mjs';
 
-export const VERSION = '0.2.0';
+export const VERSION = '0.2.1';
 
 const BOOLEAN_FLAGS = [
   'probe',
@@ -42,6 +42,7 @@ const BOOLEAN_FLAGS = [
   'help',
   'quiet',
   'full',
+  'compact',
   'events',
   'detached',
 ];
@@ -74,6 +75,9 @@ Common options
   --state-dir <dir>      Override the state directory (default: $RELAYROOK_STATE_DIR or the per-user state dir)
   --caller <id>          Authoritative calling agent id (any normalized id; known: codex, claude-code, kiro-cli, opencode, devin)
   --json                 Emit JSON (default; kept for explicitness)
+
+Discovery options
+  --compact              Keep doctor output small for agent-host routing
 
 Codex session options
   --sandbox <mode>       read-only | workspace-write | danger-full-access (default follows --profile)
@@ -137,6 +141,7 @@ async function dispatch(command, flags, rest, env) {
         env,
         timeoutMs: flagNumber(flags, 'probe-timeout', 8000),
         version: VERSION,
+        compact: flagBool(flags, 'compact'),
       });
 
     case 'preflight': {

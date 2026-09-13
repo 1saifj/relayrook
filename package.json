@@ -1,6 +1,6 @@
 {
   "name": "relayrook",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Discover locally installed coding-agent CLIs and delegate implementation, code review, or security review through persistent structured sessions.",
   "license": "MIT",
   "type": "module",

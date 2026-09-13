@@ -127,7 +127,7 @@ test('a copied skill directory runs its entrypoint with no repository checkout',
 
     const version = await run(process.execPath, [entry, 'version']);
     assert.equal(version.code, 0, version.stderr);
-    assert.equal(JSON.parse(version.stdout).version, '0.2.0');
+    assert.equal(JSON.parse(version.stdout).version, '0.2.1');
 
     const doctor = await run(process.execPath, [entry, 'doctor', '--caller', 'codex', '--state-dir', stateDir]);
     assert.equal(doctor.code, 0, doctor.stderr);

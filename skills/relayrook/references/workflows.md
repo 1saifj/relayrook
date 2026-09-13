@@ -8,7 +8,7 @@ code 1.
 
 | Command | Purpose | Key options |
 | :--- | :--- | :--- |
-| `doctor` | Caller evidence, installed backends, adapter readiness, configured routes | `--probe`, `--caller`, `--state-dir` |
+| `doctor` | Caller evidence, installed backends, adapter readiness, configured routes | `--compact`, `--probe`, `--caller`, `--state-dir` |
 | `preflight` | Capability checks without starting a session | `--backend`, `--caller`, `--state-dir` |
 | `route` | Choose a backend/model/effort for a role | `--role`, `--agent`, `--model`, `--effort`, `--avoid`, `--allow-provider`, `--prefer-provider` |
 | `start` | Create or reuse a persistent session | `--backend`/`--agent` or `--role`, `--workspace`, `--model`, `--effort`, `--profile`, `--resume`, `--sandbox`, `--approval-policy`, `--no-reuse` |
@@ -33,6 +33,13 @@ each with `ok` and, on failure, a typed `code` such as
 separately from passing checks so a host can act on them. The command's
 top-level `ok` means the report was produced; `passed` carries the capability
 verdict, so a blocked environment still exits 0 with a readable report.
+
+For ordinary delegation, run `doctor --compact` once and then use `route
+--role <role>` for selection. Do not derive a selection by parsing `doctor`.
+Both full and compact doctor responses represent `backends` and `routes` as
+arrays. Compact doctor uses schema `relayrook.doctor.compact.v1`, keeps only
+host-relevant readiness fields, configured installed candidates, warnings and
+active-session summaries; full doctor retains diagnostic evidence.
 
 `--resume` controls worker-restart recovery: `auto` resumes the backend-native
 session where the backend supports it, `required` fails with

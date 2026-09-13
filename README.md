@@ -19,7 +19,7 @@
 
 ---
 
-> **v0.2.0.** All five CLIs — Devin, Kiro, OpenCode, Claude Code and Codex — are driven through persistent sessions with turn control, parent-held permissions, and typed outcomes. Codex runs through its app-server protocol, including steering, interruption, native review, and thread resume. The status table below separates what has been exercised live on one macOS machine from what is only advertised by an agent.
+> **v0.2.1.** All five CLIs — Devin, Kiro, OpenCode, Claude Code and Codex — are driven through persistent sessions with turn control, parent-held permissions, and typed outcomes. Agent hosts use compact discovery followed by explicit route selection. Codex runs through its app-server protocol, including steering, interruption, native review, and thread resume. The status table below separates what has been exercised live on one macOS machine from what is only advertised by an agent.
 
 RelayRook lets the agent you already use delegate work to your installed **Devin, Claude Code, Kiro, OpenCode, and Codex** CLIs. It discovers what is installed, chooses a route, keeps a persistent session, pauses on permission requests, and returns typed turn outcomes.
 
@@ -31,7 +31,7 @@ Every handoff makes the chosen agent, provider, model, and reasoning effort visi
 
 | Step | Command | What it does |
 | :--- | :--- | :--- |
-| **Discover** | `doctor` | Caller evidence, installed CLIs, versions, adapter readiness, configured routes |
+| **Discover** | `doctor --compact` | Caller, installed CLIs, readiness, warnings, and concise route summaries |
 | **Select** | `route --role <role>` | Backend, model, effort, rejected candidates, and the reason |
 | **Delegate** | `start` then `prompt` | Persistent session, role-built prompt, one turn at a time |
 | **Verify** | `wait` / `status --cursor` | Typed turn state, stop reason, incremental events, parsed result block |
@@ -127,7 +127,7 @@ It installs `@agentclientprotocol/claude-agent-acp@0.76.0` into the state direct
 All output is JSON. `{"ok": true, ...}` on stdout, `{"ok": false, "error": {"code", "message", "details"}}` on stderr with exit code 1.
 
 ```bash
-relayrook doctor [--probe] [--caller <id>]
+relayrook doctor [--compact] [--probe] [--caller <id>]
 relayrook preflight [--backend <id>]
 relayrook route --role implementation|code-review|security-review [--agent X] [--model Y] [--effort Z]
 relayrook start --backend <id> --workspace <dir> [--model] [--effort] [--profile] [--resume auto|required|never]

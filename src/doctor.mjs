@@ -47,6 +47,7 @@ export function parentProcessInfo(ppid = process.ppid) {
  *   env?: NodeJS.ProcessEnv,
  *   timeoutMs?: number,
  *   version?: string,
+ *   compact?: boolean,
  * }} input
  */
 export async function runDoctor(input) {
@@ -96,8 +97,8 @@ export async function runDoctor(input) {
 
   const sessions = await listSessions(input.stateDir);
 
-  return {
-    relayrook: { version: input.version ?? '0.2.0', node: process.version, platform: `${os.platform()}-${os.arch()}` },
+  const report = {
+    relayrook: { version: input.version ?? '0.2.1', node: process.version, platform: `${os.platform()}-${os.arch()}` },
     stateDir: redactPath(input.stateDir),
     stateDirExists: existsSync(input.stateDir),
     caller: callerError ? { ...summariseCaller(caller), error: callerError } : summariseCaller(caller),
@@ -108,6 +109,67 @@ export async function runDoctor(input) {
     routeEvidenceNote: table.evidenceNote,
     sessions,
     warnings: collectWarnings(inventory, caller, callerError),
+  };
+  return input.compact ? compactDoctorReport(report) : report;
+}
+
+/**
+ * Small discovery report for agent hosts. Route selection remains the job of
+ * `route --role`; these candidates are only a readable configured summary.
+ * @param {any} report
+ */
+export function compactDoctorReport(report) {
+  const backends = (report.backends ?? []).map((backend) => ({
+    id: backend.id,
+    label: backend.label,
+    installed: backend.evidence?.installed === true,
+    version: backend.version ?? backend.hostVersion ?? null,
+    sessionSupport: backend.sessionSupport ?? null,
+    ready: backend.evidence?.installed === true && (backend.adapterReadiness?.ready ?? true),
+    problems: backend.problems ?? [],
+  }));
+  const installed = new Set(backends.filter((backend) => backend.installed).map((backend) => backend.id));
+  const activeSessions = (report.sessions ?? [])
+    .filter((session) => session.alive === true || ['starting', 'ready', 'stopping'].includes(session.status))
+    .map((session) => ({
+      key: session.key,
+      backend: session.backend,
+      status: session.status,
+      alive: session.alive === true,
+      turnState: session.turn?.state ?? null,
+    }));
+
+  return {
+    schema: 'relayrook.doctor.compact.v1',
+    relayrook: report.relayrook,
+    stateDir: report.stateDir,
+    caller: {
+      rootCaller: report.caller?.rootCaller ?? null,
+      immediateParent: report.caller?.immediateParent ?? null,
+      knownHost: report.caller?.knownHost === true,
+      confidence: report.caller?.confidence ?? null,
+      ambiguous: report.caller?.ambiguous === true,
+      reason: report.caller?.reason ?? null,
+      error: report.caller?.error ?? null,
+    },
+    preflight: {
+      passed: report.preflight?.ok === true,
+      blockers: report.preflight?.blockers ?? [],
+    },
+    backends,
+    routes: (report.routes ?? []).map((route) => ({
+      role: route.role,
+      readOnly: route.readOnly === true,
+      configuredCandidates: (route.candidates ?? [])
+        .filter((candidate) => installed.has(candidate.backend))
+        .map((candidate) => ({
+          backend: candidate.backend,
+          model: candidate.model ?? null,
+          effort: candidate.effort ?? null,
+        })),
+    })),
+    sessions: { activeCount: activeSessions.length, active: activeSessions },
+    warnings: report.warnings ?? [],
   };
 }
 
