@@ -9,18 +9,74 @@ code 1.
 | Command | Purpose | Key options |
 | :--- | :--- | :--- |
 | `doctor` | Caller evidence, installed backends, adapter readiness, configured routes | `--probe`, `--caller`, `--state-dir` |
+| `preflight` | Capability checks without starting a session | `--backend`, `--caller`, `--state-dir` |
 | `route` | Choose a backend/model/effort for a role | `--role`, `--agent`, `--model`, `--effort`, `--avoid`, `--allow-provider`, `--prefer-provider` |
-| `start` | Create or reuse a persistent session | `--backend`/`--agent` or `--role`, `--workspace`, `--model`, `--effort`, `--profile`, `--no-reuse` |
+| `start` | Create or reuse a persistent session | `--backend`/`--agent` or `--role`, `--workspace`, `--model`, `--effort`, `--profile`, `--resume`, `--sandbox`, `--approval-policy`, `--no-reuse` |
 | `prompt` | Submit one turn | `--session`, `--text` or (`--role` and `--task`), `--scope`, `--check`, `--timeout` |
+| `steer` | Add input to the in-flight turn (Codex `turn/steer` only) | `--session`, `--text` |
+| `review` | Run a native review turn (Codex `review/start` only) | `--session`, `--target`, `--branch`, `--commit`, `--instructions`, `--delivery` |
 | `status` | Session state plus events from a cursor | `--session`, `--cursor`, `--limit`, `--turn`, `--full` |
 | `wait` | Poll to a terminal turn state | `--session`, `--cursor`, `--timeout`, `--poll`, `--events`, `--full` |
 | `cancel` | Cancel the active turn | `--session`, `--turn` |
 | `permission` | Answer a pending permission request | `--session`, `--request`, `--option` or `--cancel` |
 | `stop` | Stop the session worker | `--session` |
+| `cleanup` | Reap dead workers and stale control endpoints | `--state-dir` |
 | `sessions` | List known sessions | — |
 | `bootstrap` | Install a pinned adapter package | `--backend`, `--dry-run` |
 | `prompt-preview` | Print the prompt a role would send | `--role`, `--task`, `--workspace`, `--scope`, `--check` |
 | `parse-result` | Extract the `relayrook-result` block from a reply | `--file` or `--text` |
+
+`preflight` returns one check per capability — `node`, `localExecution`,
+`stateDir`, `transport`, and per backend `executable`, `adapter`, `model` —
+each with `ok` and, on failure, a typed `code` such as
+`local_execution_unavailable` or `transport_unavailable`. Blockers are listed
+separately from passing checks so a host can act on them. The command's
+top-level `ok` means the report was produced; `passed` carries the capability
+verdict, so a blocked environment still exits 0 with a readable report.
+
+`--resume` controls worker-restart recovery: `auto` resumes the backend-native
+session where the backend supports it, `required` fails with
+`session_not_resumable` when it cannot, and `never` starts fresh. A session is
+reported as `recovered` only when the backend confirmed the resume.
+
+Codex sessions accept `--sandbox read-only|workspace-write|danger-full-access`
+and `--approval-policy never|on-request|untrusted`; both flags fail with
+`capability_unsupported` on any other backend. Review and security-review roles
+default to the `read-only` profile, which maps onto a read-only Codex sandbox
+with approvals off. The posture is enforced at prompt time too: `prompt --role
+code-review` against a Codex session whose recorded sandbox is not `read-only`
+fails with `role_posture_mismatch` rather than letting a reviewer write without
+a permission request reaching the parent. Native `review` applies the same
+posture check before calling `review/start`.
+
+## Orchestration
+
+RelayRook moves work; the caller keeps ownership of it.
+
+- **Delegate only when useful.** A second agent earns its cost when it adds
+  independence (a reviewer that did not write the code), a capability or
+  subscription the caller lacks, or a bounded task that runs while the caller
+  continues. Answering a question or making a small edit directly is faster
+  and cheaper.
+- **The caller owns the whole.** Architecture, decomposition into bounded
+  tasks, integration of results and final verification stay with the caller.
+  A delegated `complete-*` claim is input to that verification, not a
+  substitute for it.
+- **Bounded task contracts.** Each delegation states the task, the files or
+  directories it may touch, the evidence to return (diff summary, commands
+  run, findings), and the checks that must pass. `prompt --scope` bounds the
+  workspace view; the role contract bounds the reply.
+- **Non-overlapping writers.** Parallel implementation sessions own disjoint
+  files. Two agents editing the same file produce lost updates that no later
+  review can fully repair; split the work or sequence it.
+- **Independent read-only review.** The review roles run read-only by
+  default, so the reviewer cannot fix what it finds — findings stay
+  measurable, and the caller decides what to apply.
+- **Separate verification.** Builds, tests and checks run against the
+  integrated tree after delegated work lands. `evals/run.mjs` follows the
+  same rule: a run scores from observed outcomes — check exit codes,
+  file-level diffs, seeded-finding recall — never from the agent's
+  self-report.
 
 ## Turn states
 
@@ -52,16 +108,42 @@ a gap is always visible rather than silently skipped. Per-event text is capped a
 8 KiB with `truncated: true`; the full text stays in
 `<state>/sessions/<key>/turns/<turnId>/`.
 
-Event kinds: `session_ready`, `turn_started`, `text`, `thought`, `tool_call`,
-`tool_call_update`, `plan`, `usage_update`, `permission`, `permission_resolved`,
-`cancel_requested`, `turn_timeout`, `turn_finished`, `error`,
-`session_stopping`, `agent_update`, `agent_notification`.
+Event kinds: `session_ready`, `session_recovered`, `session_not_resumable`,
+`turn_started`, `steered`, `text`, `thought`, `tool_call`, `tool_call_update`,
+`plan`, `diff`, `usage_update`, `model_rerouted`, `rate_limits`, `permission`,
+`permission_resolved`, `cancel_requested`, `turn_timeout`, `turn_finished`,
+`error`, `session_stopping`, `agent_update`, `agent_notification`.
 
 `wait` stays compact by default: it returns `eventCount` without replaying raw
 events, and when `parsedResult.ok` is true it omits the duplicate answer text.
 Pass `--events` for event replay and `--full` for the full answer plus model and
 mode discovery metadata. `status` keeps event paging but also needs `--full` for
 the complete discovery metadata.
+
+## Turn usage
+
+When a backend reports usage, the turn summary carries one normalized record
+with the provider payload preserved verbatim under `raw`:
+
+| Field | Meaning |
+| :--- | :--- |
+| `uncachedInputTokens` | reported input minus cached and cache-write input |
+| `cachedInputTokens` | input served from the provider's cache |
+| `cacheWriteInputTokens` | input written to the provider's cache |
+| `outputTokens` | generated output tokens |
+| `reasoningOutputTokens` | output spent on reasoning, where reported |
+| `totalTokens` | the provider's reported total |
+| `contextUsedTokens` / `contextWindowTokens` | context-window occupancy |
+| `eventCount` | usage events observed during the turn |
+| `latencyMs` | wall-clock turn latency |
+| `rateLimits` | latest provider rate-limit snapshot, or null |
+
+A field the provider did not report is `null` — never zero, never estimated;
+a zero means the provider reported zero. Codex reports cumulative counters on
+`thread/tokenUsage/updated` and rate-limit snapshots as `rate_limits` events.
+ACP agents that send `session/usage_update` report context-window occupancy,
+which maps to the context fields rather than billing totals. A backend that
+reports nothing yields all-null fields with `raw: null`.
 
 ## Permissions
 
@@ -82,8 +164,12 @@ agent's own handling of a refused tool.
 `worker_start_failed`, `active_turn`, `no_active_turn`, `turn_timeout`,
 `permission_not_pending`, `permission_option_invalid`, `pin_unsatisfiable`,
 `no_eligible_route`, `recursion_depth_exceeded`, `recursive_backend`,
-`route_envelope_invalid`, `protocol_error`, `line_overflow`, `process_exited`, `model_rejected`,
-`bootstrap_failed`, `state_error`.
+`caller_ambiguous`, `route_envelope_invalid`, `protocol_error`, `line_overflow`,
+`process_exited`, `model_rejected`, `bootstrap_failed`, `state_error`,
+`local_execution_unavailable`, `node_version_unsupported`,
+`transport_unavailable`, `unsupported_backend_version`,
+`adapter_version_mismatch`, `session_not_resumable`, `capability_unsupported`,
+`role_posture_mismatch`, `control_unauthorized`.
 
 ## State layout
 
@@ -93,19 +179,31 @@ State lives outside the target repository, at `$RELAYROOK_STATE_DIR`,
 ```text
 <state>/
   probe-cache.json
+  route-integrity.key            HMAC key that signs delegation envelopes (0600)
+  route-evidence.json            optional measured route evaluation results
   adapters/                      pinned adapter packages installed by bootstrap
   sessions/<key>/
-    meta.json                    crash-safe metadata (atomic write + rename)
+    meta.json                    crash-safe metadata (atomic write + rename, schemaVersion 2)
     request.json                 the launch spec
     events.jsonl                 bounded, cursor-addressable event log
-    control.sock                 worker control socket
+    control.sock                 worker control socket (Unix) or named pipe (Windows)
+    control.token                per-session token required by every control call
     worker.log                   worker diagnostics
     turns/<turnId>/              prompt.txt, events.jsonl, answer.txt, result.json
 ```
 
 The session key is a hash of backend, workspace, model, effort and profile, so
 an identical `start` reuses the warm worker. Reuse is confirmed by pinging the
-control socket — a leftover socket file is not treated as a live worker.
+control socket — a leftover socket file is not treated as a live worker. Every
+control request must carry the session's `control.token`; a missing or wrong
+token fails with `control_unauthorized`. On Unix the socket file is created
+mode 0600; on Windows the pipe namespace is machine-wide, so the per-session
+`control.token` — itself protected by the user-profile ACL — is the access
+control, and every control call must carry it. `cleanup` pings every recorded
+worker, marks dead ones `orphaned`, removes their stale endpoints, and kills
+an orphaned backend process only when the live pid carries both the recorded
+command name and process start marker — an identity it cannot verify is reported as
+`orphanBackendUnverified` and left alone.
 
 ## Caller and recursion
 
@@ -117,6 +215,42 @@ name, then `unknown` with a reason. Conflicting host signals produce
 Each delegation increments `depth` and appends the backend to `ancestry`.
 Depth reaching `--max-depth` (default 3) fails with `recursion_depth_exceeded`;
 a backend already in the ancestry is rejected unless `--allow-repeat-backend`.
+
+`RELAYROOK_ROUTE` is the route envelope: JSON carrying the root caller, the
+parent, depth, ancestry and an HMAC-SHA256 signature over those fields. The
+signature is minted with `route-integrity.key`, a 32-byte per-state-directory
+key. An envelope that fails verification — unsigned, malformed, or signed for
+a different state directory — is refused with `route_envelope_invalid`, so a
+forged or inherited envelope can never pass as trusted ancestry. The trust
+boundary is the state directory: anything that can read `route-integrity.key`
+can mint a valid envelope, which is why the key is created mode 0600 and state
+stays outside the repository.
+
+## Route evidence
+
+`route` scores each candidate from its configured weight, whether a verified
+turn is on record, and whether the backend's provider family differs from the
+caller's. On top of that, `<state>/route-evidence.json` can carry measured
+results keyed `role|backend|model|effort` with `runs`, `successRate` and
+`precision`. A route counts as measured at `runs >= 2`; below that it is
+anecdotal and does not shift the score. When at least one candidate is
+measured, the response `evidenceBasis` is `measured+configured`; otherwise it
+is `configured-preference`. `evals/run.mjs` writes this file from held-out
+task results.
+
+Each eval run records success, precision and recall against seeded findings,
+scope compliance (a change outside the fixture's allowed files fails the run),
+turn latency, and the normalized usage record. Entries merge across
+invocations, so `--runs N` — or repeated calls — builds comparisons per
+route key; aggregated `scopeComplianceRate`, `meanLatencyMs` and token means
+average only the runs that reported them, and stay `null` when none did.
+Skipped runs never count.
+
+There is no generic quality/balanced/speed objective. A speed- or
+quality-biased selection is only honest once measured latency, usage and
+accuracy span at least two eligible routes for the same role; until the
+evidence file carries that, such an objective would be an invented weight, so
+it stays future work.
 
 ## Testing hook
 

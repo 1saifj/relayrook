@@ -31,11 +31,17 @@ function hashFile(file) {
 
 /** @param {string} command @param {string[]} args @param {{cwd?: string, env?: any, timeout?: number}} [options] */
 function run(command, args, options = {}) {
+  // Delegation metadata from the invoking environment must not leak into a
+  // spawned CLI: it is signed against this machine's own state dir, so an
+  // inherited copy is correctly rejected as foreign. Tests get a clean slate.
+  const env = options.env ?? process.env;
+  const clean = { ...env };
+  delete clean.RELAYROOK_ROUTE;
   return new Promise((resolve) => {
     execFile(
       command,
       args,
-      { cwd: options.cwd, env: options.env, timeout: options.timeout ?? 60000, maxBuffer: 16 * 1024 * 1024 },
+      { cwd: options.cwd, env: clean, timeout: options.timeout ?? 60000, maxBuffer: 16 * 1024 * 1024 },
       (err, stdout, stderr) => resolve({ code: err ? (err.code ?? 1) : 0, stdout: String(stdout), stderr: String(stderr) }),
     );
   });
@@ -100,7 +106,9 @@ test('SKILL.md carries the frontmatter a host needs to discover it', () => {
   // Discovery guidance: when to use it and when not to.
   assert.match(text, /Do not use/);
   assert.match(text, /Codex/);
-  assert.match(text, /discovery only|No\*\* — discovery only/);
+  // The entrypoint path is relative to SKILL.md itself — no $SKILL_DIR env var.
+  assert.doesNotMatch(text, /\$SKILL_DIR/);
+  assert.match(text, /scripts\/relayrook\.mjs/);
 });
 
 test('a copied skill directory runs its entrypoint with no repository checkout', async () => {
@@ -119,7 +127,7 @@ test('a copied skill directory runs its entrypoint with no repository checkout',
 
     const version = await run(process.execPath, [entry, 'version']);
     assert.equal(version.code, 0, version.stderr);
-    assert.equal(JSON.parse(version.stdout).version, '0.1.0');
+    assert.equal(JSON.parse(version.stdout).version, '0.2.0');
 
     const doctor = await run(process.execPath, [entry, 'doctor', '--caller', 'codex', '--state-dir', stateDir]);
     assert.equal(doctor.code, 0, doctor.stderr);

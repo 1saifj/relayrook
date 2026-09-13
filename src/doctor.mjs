@@ -2,12 +2,15 @@ import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import os from 'node:os';
 
-import { allBackends } from './backends.mjs';
+import { allBackends, getBackend } from './backends.mjs';
 import { discoverAll, ProbeCache } from './discovery.mjs';
 import { probeCodex } from './adapters/codex.mjs';
+import { probeAcp } from './adapters/acp-probe.mjs';
 import { resolveCaller } from './caller.mjs';
 import { loadRouteTable, ROLES } from './routing.mjs';
 import { listSessions } from './sessions.mjs';
+import { runPreflight } from './preflight.mjs';
+import { resolveRouteKey } from './state.mjs';
 import { redactPath } from './util.mjs';
 
 /**
@@ -43,16 +46,39 @@ export function parentProcessInfo(ppid = process.ppid) {
  *   probe?: boolean,
  *   env?: NodeJS.ProcessEnv,
  *   timeoutMs?: number,
+ *   version?: string,
  * }} input
  */
 export async function runDoctor(input) {
   const env = input.env ?? process.env;
   const parent = await parentProcessInfo();
-  const caller = resolveCaller({ explicitCaller: input.explicitCaller ?? null, env, parentProcess: parent });
+  const routeKey = resolveRouteKey(input.stateDir);
+  // A malformed or forged route envelope hard-fails delegation commands, but
+  // doctor's job is to report the environment as found — surface the error as
+  // caller evidence instead of aborting the whole report.
+  let caller;
+  let callerError = null;
+  try {
+    caller = resolveCaller({ explicitCaller: input.explicitCaller ?? null, env, parentProcess: parent, routeKey });
+  } catch (err) {
+    callerError = { code: err?.code ?? 'internal_error', message: err?.message ?? String(err) };
+    caller = {
+      rootCaller: null, immediateParent: null, knownHost: false,
+      confidence: 'invalid', ambiguous: false, candidates: [],
+      depth: 0, ancestry: [], routeId: null, conflicts: [], reason: null,
+      evidence: {
+        explicit: input.explicitCaller ?? null,
+        environment: [],
+        routeEnvelope: { present: true },
+        parentProcess: parent,
+      },
+    };
+  }
   const inventory = await discoverAll({ stateDir: input.stateDir, env, timeoutMs: input.timeoutMs });
+  const preflight = await runPreflight({ stateDir: input.stateDir, env });
 
   if (input.probe) {
-    await applyProbes(inventory, input.stateDir);
+    await applyProbes(inventory, input.stateDir, env);
   }
 
   const table = loadRouteTable();
@@ -71,48 +97,67 @@ export async function runDoctor(input) {
   const sessions = await listSessions(input.stateDir);
 
   return {
-    relayrook: { version: '0.1.0', node: process.version, platform: `${os.platform()}-${os.arch()}` },
+    relayrook: { version: input.version ?? '0.2.0', node: process.version, platform: `${os.platform()}-${os.arch()}` },
     stateDir: redactPath(input.stateDir),
     stateDirExists: existsSync(input.stateDir),
-    caller: summariseCaller(caller),
+    caller: callerError ? { ...summariseCaller(caller), error: callerError } : summariseCaller(caller),
+    preflight,
     backends: inventory,
     routes,
     routeEvidenceBasis: table.evidenceBasis,
     routeEvidenceNote: table.evidenceNote,
     sessions,
-    warnings: collectWarnings(inventory, caller),
+    warnings: collectWarnings(inventory, caller, callerError),
   };
 }
 
 /**
  * Live protocol probes. Contained per backend: one failing CLI never fails the
- * whole inventory.
+ * whole inventory. ACP backends get an initialize-only handshake — enough to
+ * prove protocol readiness and read advertised capabilities (including
+ * `loadSession`) without creating a session.
  * @param {any[]} inventory
  * @param {string} stateDir
+ * @param {NodeJS.ProcessEnv} env
  */
-async function applyProbes(inventory, stateDir) {
+async function applyProbes(inventory, stateDir, env) {
   const cache = new ProbeCache(stateDir);
   for (const record of inventory) {
     if (record.evidence?.installed !== true) continue;
-    if (record.id !== 'codex') {
-      // ACP protocol probes spawn a real agent session; v0.1 keeps `doctor`
-      // side-effect free and leaves those states unknown until a session runs.
-      record.evidence.protocolReady = null;
-      record.probeNote = 'ACP handshake not probed by doctor; run `relayrook start` to establish protocol readiness.';
+    const key = ProbeCache.key({ backend: record.id, executable: record.executable, version: record.version });
+    if (record.id === 'codex') {
+      let probe = cache.get(key);
+      if (!probe) {
+        probe = await probeCodex({ timeoutMs: 30000 });
+        cache.set(key, probe);
+      }
+      record.evidence.protocolReady = probe.protocolReady === true;
+      record.evidence.authenticated = probe.account?.present ?? null;
+      record.evidence.modelAdvertised = Array.isArray(probe.models) && probe.models.length > 0;
+      record.advertisedModels = probe.models ?? [];
+      record.sessionControl = probe.sessionControl;
+      record.capabilities = probe.capabilities ?? null;
+      cache.set('codex-advertised-models', probe.models ?? []);
+      if (probe.error) record.problems.push(`app-server probe failed: ${probe.error}`);
       continue;
     }
-    const key = ProbeCache.key({ backend: record.id, executable: record.executable, version: record.version });
+    // ACP backends: initialize handshake only. No session is created.
     let probe = cache.get(key);
     if (!probe) {
-      probe = await probeCodex({ timeoutMs: 30000 });
-      cache.set(key, probe);
+      try {
+        probe = await probeAcp({ backend: getBackend(record.id), stateDir, env, timeoutMs: 30000 });
+        cache.set(key, probe);
+      } catch (err) {
+        probe = { protocolReady: false, error: err instanceof Error ? err.message : String(err) };
+        cache.set(key, probe);
+      }
     }
     record.evidence.protocolReady = probe.protocolReady === true;
-    record.evidence.authenticated = probe.account?.present ?? null;
-    record.evidence.modelAdvertised = Array.isArray(probe.models) && probe.models.length > 0;
-    record.advertisedModels = probe.models ?? [];
-    record.sessionControl = probe.sessionControl;
-    if (probe.error) record.problems.push(`app-server probe failed: ${probe.error}`);
+    record.agentInfo = probe.agentInfo ?? null;
+    record.agentCapabilities = probe.agentCapabilities ?? null;
+    record.evidence.modelAdvertised = null; // models arrive with session metadata
+    if (probe.error) record.problems.push(`initialize probe failed: ${probe.error}`);
+    if (probe.note) record.probeNote = probe.note;
   }
 }
 
@@ -121,6 +166,7 @@ function summariseCaller(caller) {
   return {
     rootCaller: caller.rootCaller,
     immediateParent: caller.immediateParent,
+    knownHost: caller.knownHost === true,
     confidence: caller.confidence,
     ambiguous: caller.ambiguous === true,
     candidates: caller.candidates ?? [],
@@ -137,6 +183,7 @@ function summariseCaller(caller) {
         ? {
             present: true,
             malformed: caller.evidence.routeEnvelope.malformed === true,
+            trusted: caller.evidence.routeEnvelope.trusted === true,
             depth: caller.evidence.routeEnvelope.depth,
             ancestry: caller.evidence.routeEnvelope.ancestry,
           }
@@ -146,9 +193,12 @@ function summariseCaller(caller) {
   };
 }
 
-/** @param {any[]} inventory @param {any} caller */
-function collectWarnings(inventory, caller) {
+/** @param {any[]} inventory @param {any} caller @param {any} [callerError] */
+function collectWarnings(inventory, caller, callerError = null) {
   const warnings = [];
+  if (callerError) {
+    warnings.push(`Route envelope rejected: ${callerError.message} Delegation commands still fail closed on it.`);
+  }
   if (caller.ambiguous) warnings.push(`Caller is ambiguous (${(caller.candidates ?? []).join(', ')}); pass --caller.`);
   if (caller.confidence === 'inferred') {
     warnings.push('Caller was inferred from inherited environment signals; pass --caller for an authoritative value.');

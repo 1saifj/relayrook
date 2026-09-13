@@ -9,7 +9,7 @@
 
 <p align="center">
   <a href="#the-workflow">Workflow</a> ·
-  <a href="#what-works-in-v01">Status</a> ·
+  <a href="#status">Status</a> ·
   <a href="#installation">Installation</a> ·
   <a href="#commands">Commands</a> ·
   <a href="#roadmap">Roadmap</a> ·
@@ -19,9 +19,9 @@
 
 ---
 
-> **v0.1.** The runtime, CLI, and installable skill exist and are tested. Devin, Kiro, OpenCode, and Claude Code are driven through persistent ACP sessions. Codex is **discovery only** — RelayRook reports its models and account state but does not run turns through it. The status table below separates what has been exercised live on one macOS machine from what is only advertised by an agent.
+> **v0.2.** All five CLIs — Devin, Kiro, OpenCode, Claude Code and Codex — are driven through persistent sessions with turn control, parent-held permissions, and typed outcomes. Codex now runs through its app-server protocol, including steering, interruption, native review, and thread resume. The status table below separates what has been exercised live on one macOS machine from what is only advertised by an agent.
 
-RelayRook lets the agent you already use delegate work to your installed **Devin, Claude Code, Kiro, and OpenCode** CLIs. It discovers what is installed, chooses a route, keeps a persistent session, pauses on permission requests, and returns typed turn outcomes.
+RelayRook lets the agent you already use delegate work to your installed **Devin, Claude Code, Kiro, OpenCode, and Codex** CLIs. It discovers what is installed, chooses a route, keeps a persistent session, pauses on permission requests, and returns typed turn outcomes.
 
 Every handoff makes the chosen agent, provider, model, and reasoning effort visible. Nothing is substituted silently.
 
@@ -35,7 +35,7 @@ Every handoff makes the chosen agent, provider, model, and reasoning effort visi
 | **Select** | `route --role <role>` | Backend, model, effort, rejected candidates, and the reason |
 | **Delegate** | `start` then `prompt` | Persistent session, role-built prompt, one turn at a time |
 | **Verify** | `wait` / `status --cursor` | Typed turn state, stop reason, incremental events, parsed result block |
-| **Continue** | `prompt` / `cancel` / `permission` | Follow-ups on the same session, cancellation, parent-held permissions |
+| **Continue** | `prompt` / `steer` / `review` / `cancel` / `permission` | Follow-ups on the same session, in-flight steering, native review, cancellation, parent-held permissions |
 
 ### What you would ask
 
@@ -55,7 +55,7 @@ Every handoff makes the chosen agent, provider, model, and reasoning effort visi
 
 > Continue the same worker session with these test failures. Keep the selected model and effort.
 
-## What works in v0.1
+## Status
 
 Measured on macOS 26.6 (darwin-arm64), Node v26.7.0, on 2026-09-13. "Live" means RelayRook itself drove it; "researched" means a separate protocol probe established it before RelayRook existed.
 
@@ -65,18 +65,19 @@ Measured on macOS 26.6 (darwin-arm64), Node v26.7.0, on 2026-09-13. "Live" means
 | **Kiro** | `2.21.4` | native `kiro-cli acp` | implemented | **Live:** code review plus smoke turn on `claude-opus-5`; `max` effort confirmed through `_kiro.dev/metadata`. |
 | **OpenCode** | `1.18.30` | native `opencode acp` | implemented | **Live:** `opencode-go/kimi-k2.7-code` selected and read back; inference completed with `end_turn` and a parsed result. |
 | **Claude Code** | `2.1.270` | pinned `@agentclientprotocol/claude-agent-acp@0.76.0` | implemented | **Live:** adapter bootstrapped without lifecycle scripts; `opus[1m]` and `max` effort confirmed; inference completed with `end_turn`. |
-| **Codex** | `0.153.4` | native `codex app-server --stdio` | **not implemented** | **Live:** `initialize`, `model/list` (6 models), `account/read` (presence only). Routing rejects it with `session-control-not-implemented`. |
+| **Codex** | `0.153.4` | native `codex app-server --stdio` | implemented | **Live:** `thread/start` model and effort readback; `turn/start` completed; `turn/steer`, `turn/interrupt`, `review/start` and `thread/resume` all exercised against the installed CLI. |
 
-All four ACP backends have completed a live inference turn through RelayRook. The full lifecycle — prompt, events, concurrent permission pauses, cancellation, timeout, oversized payloads, serialized starts, offline recovery, and stop — is also covered by a deterministic ACP agent that speaks the real protocol.
+All five backends have completed a live inference turn through RelayRook. The full lifecycle — prompt, events, concurrent permission pauses, steering, interruption, review, cancellation, timeout, oversized payloads, serialized starts, worker-restart recovery, and stop — is also covered by deterministic protocol fixtures that speak the real protocols.
 
 ### Honest limits
 
-- **Codex turns are not implemented.** `thread/start`, `turn/start`, `turn/steer`, `turn/interrupt` and `review/start` are unbuilt. `start --backend codex` fails with a typed error instead of pretending.
-- **Route weights are configured preferences, not benchmarks.** `evidenceBasis` is `configured-preference` in every `route` response. Candidates carry `verifiedTurn: true` only where a real turn is on record from the research phase.
+- **Route weights are configured preferences, not benchmarks.** `evidenceBasis` is `configured-preference` unless measured evaluation evidence exists in `<state>/route-evidence.json` (`runs >= 2` per route). `evals/run.mjs` produces that file from held-out task results, recording success, precision/recall, scope compliance, latency, and normalized usage per run. A single run stays anecdotal; repeat with `--runs N` or across invocations to reach the measured threshold.
+- **No quality/balanced/speed objective exists yet.** A speed- or quality-biased route is only honest once measured latency, usage, and accuracy span at least two eligible routes per role; the current evidence does not, so no such weight is configured.
 - **Kiro effort is confirmed after metadata arrives.** The initial session response has no effort field. Kiro then emits `_kiro.dev/metadata`; RelayRook records `support: "agent-notification"` and verifies the observed value against the requested value.
 - **Quota is always `unknown`.** A saved credential is not proof of remaining allowance, and RelayRook does not invent one.
-- **macOS only, so far.** CI also runs the runtime's own tests on Linux. Windows is untested and unclaimed.
-- **No steering.** Codex's `turn/steer` and the Claude adapter's steering extension are not used. Cancellation is not presented as an equivalent.
+- **Windows and Linux are supported targets; macOS is where live backend verification ran.** CI runs the runtime's own tests on all three, covering both control transports (unix sockets, named pipes). Live multi-backend evidence was collected on macOS.
+- **Steering is Codex-only.** `steer` maps to `turn/steer`; the Claude adapter's steering extension is not used. Cancellation is not presented as an equivalent.
+- **Native review is Codex-only.** `review` maps to `review/start`; other backends receive `prompt --role code-review`.
 
 [Versions, protocol differences, and per-backend behaviour →](docs/compatibility.md)
 
@@ -126,14 +127,18 @@ All output is JSON. `{"ok": true, ...}` on stdout, `{"ok": false, "error": {"cod
 
 ```bash
 relayrook doctor [--probe] [--caller <id>]
+relayrook preflight [--backend <id>]
 relayrook route --role implementation|code-review|security-review [--agent X] [--model Y] [--effort Z]
-relayrook start --backend <id> --workspace <dir> [--model] [--effort] [--profile]
+relayrook start --backend <id> --workspace <dir> [--model] [--effort] [--profile] [--resume auto|required|never]
 relayrook prompt --session <key> --role <role> --task "..." [--check "npm test"]
+relayrook steer --session <key> --text "..."            # Codex only
+relayrook review --session <key> --target uncommitted-changes  # Codex only
 relayrook status --session <key> --cursor <n> [--full]
 relayrook wait --session <key> [--timeout ms] [--events] [--full]
 relayrook permission --session <key> --option <optionId>
 relayrook cancel --session <key>
 relayrook stop --session <key>
+relayrook cleanup
 relayrook sessions
 relayrook bootstrap --backend claude
 ```
@@ -159,6 +164,7 @@ relayrook wait --session "$S" --timeout 900000
 - **Reviews are read-only by default,** and security findings must carry prerequisites, attacker control, trust boundary, evidence and a safe verification method. "No findings" and "incomplete" are distinct statuses.
 - **State lives outside your repository,** at `$RELAYROOK_STATE_DIR`, `$XDG_STATE_HOME/relayrook`, or `~/.local/state/relayrook`. Metadata writes are atomic; events are cursor-addressable with bounded retention and an explicit `cursorGap`; full per-turn transcripts are kept on disk.
 - **Polling stays compact.** `wait` omits raw event chunks by default and omits a duplicate answer when its structured result parsed successfully. Use `--events` for event replay and `--full` for the full answer and discovery metadata.
+- **Usage is normalized, never invented.** Each turn carries one canonical record — uncached/cached/cache-write input, output and reasoning tokens, totals, event count, latency, and the latest rate-limit snapshot — with the provider payload preserved under `raw`. A field the provider did not report is `null`, not zero.
 - **No credentials in output.** Only environment variable *names* are recorded, paths are home-redacted, and `account/read` is reduced to a presence flag.
 
 ## Repository layout
@@ -169,11 +175,12 @@ bin/relayrook.js              development entrypoint
 skills/relayrook/             the distributable skill
   SKILL.md                    portable skill prompt
   agents/openai.yaml          optional Codex host metadata
+  bin/relayrook[.cmd]         self-locating launchers (posix + Windows)
   references/                 command reference and per-backend behaviour
   scripts/relayrook.mjs       self-contained entrypoint
   scripts/lib/                byte-for-byte copy of src/ (npm run build)
 tests/                        unit and end-to-end tests (node --test)
-evals/                        trigger and role fixtures
+evals/                        trigger and role fixtures, held-out eval runner
 docs/                         research, compatibility, inventory, evaluation plan
 ```
 
@@ -184,7 +191,7 @@ docs/                         research, compatibility, inventory, evaluation pla
 ```bash
 npm run lint       # formatting plus a hygiene scan for paths, e-mails, and tokens
 npm run typecheck  # TypeScript over JSDoc-annotated ESM
-npm test           # 103 tests, including the full session lifecycle
+npm test           # 159 tests, including the full session lifecycle on both protocols
 npm run check      # all three
 ```
 
@@ -194,9 +201,12 @@ npm run check      # all three
 - [x] Validate a persistent Devin prototype and basic Kiro/OpenCode Go inference.
 - [x] Implement shared discovery, session control, permissions, and routing.
 - [x] Ship a self-contained skill subtree that runs without the development checkout.
-- [x] Drive live turns through Devin, Kiro, OpenCode Go, and Claude Code via RelayRook itself.
-- [ ] Implement Codex app-server thread and turn control, including `review/start`.
-- [ ] Evaluate implementation quality and review accuracy on held-out tasks.
+- [x] Drive live turns through Devin, Kiro, OpenCode Go, Claude Code, and Codex via RelayRook itself.
+- [x] Implement Codex app-server thread and turn control, including `turn/steer`, `turn/interrupt`, `thread/resume`, and `review/start`.
+- [x] Support macOS, Linux and Windows with per-platform control transports and restart-safe sessions.
+- [x] Add capability preflight, typed unavailable-execution errors, signed delegation envelopes, and control-token authentication.
+- [x] Evaluate implementation quality and review accuracy on held-out tasks via `evals/run.mjs`.
+- [ ] Add a generic quality/balanced/speed routing objective once measured evidence spans multiple eligible routes per role.
 - [ ] Verify skill installation and behavior in every supported host.
 - [x] Publish the first release under `1saifj/relayrook` and verify skills.sh discovery and installation.
 

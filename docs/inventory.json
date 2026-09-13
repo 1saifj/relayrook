@@ -179,7 +179,8 @@
       "authentication_evidence": "ChatGPT login and successful account/read",
       "quota": "not queried in this probe",
       "prompt_smoke": {
-        "status": "not run"
+        "status": "passed through RelayRook",
+        "detail": "turn/start completed with end_turn; turn/steer, turn/interrupt, review/start, and thread/resume exercised live against codex app-server 0.153.4"
       },
       "native_capabilities_inspected": [
         "turn/steer",
@@ -187,7 +188,9 @@
         "review/start",
         "model/list"
       ],
-      "native_steering_tested": false
+      "native_steering_tested": true,
+      "new_session": "passed (thread/start with model and effort readback)",
+      "resume": "passed (thread/resume after worker restart)"
     },
     {
       "cli": "opencode",

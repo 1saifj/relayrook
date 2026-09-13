@@ -1,10 +1,9 @@
-import { spawn } from 'node:child_process';
-
 import { JsonRpcPeer } from '../rpc.mjs';
 import { fail, ERROR_CODES } from '../errors.mjs';
 import { buildLaunchArgs, readModelMetadata, readEffortMetadata } from '../backends.mjs';
+import { IS_WINDOWS, spawnCommand, terminateWindowsProcessTree } from '../platform.mjs';
 
-export const CLIENT_INFO = Object.freeze({ name: 'relayrook', version: '0.1.0' });
+export const CLIENT_INFO = Object.freeze({ name: 'relayrook', version: '0.2.0' });
 export const PROTOCOL_VERSION = 1;
 
 /**
@@ -75,7 +74,7 @@ export class AcpConnection {
 
   async start() {
     const { command, args } = this.launchArgv;
-    const child = spawn(command, args, {
+    const child = spawnCommand(command, args, {
       cwd: this.options.cwd,
       env: { ...process.env, ...(this.options.env ?? {}) },
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -158,6 +157,56 @@ export class AcpConnection {
       throw fail(ERROR_CODES.protocol_error, 'session/new did not return a sessionId');
     }
     return result;
+  }
+
+  /**
+   * Whether the agent advertised `session/load` at initialize time.
+   * @returns {boolean}
+   */
+  get supportsResume() {
+    return this.initializeResult?.agentCapabilities?.loadSession === true;
+  }
+
+  /**
+   * Resume a persisted ACP session after a worker restart. Requires the agent
+   * to advertise `loadSession`; a refusal is reported as
+   * `session_not_resumable`, never as a recovered session.
+   * @param {{nativeSessionId: string, cwd: string, timeoutMs?: number, mcpServers?: any[]}} options
+   */
+  async resumeSession(options) {
+    if (!this.supportsResume) {
+      throw fail(ERROR_CODES.session_not_resumable, `${this.backend.id} did not advertise session/load`, {
+        backend: this.backend.id,
+        sessionId: options.nativeSessionId,
+      });
+    }
+    let result;
+    try {
+      result = await this.peer.request(
+        'session/load',
+        { sessionId: options.nativeSessionId, cwd: options.cwd, mcpServers: options.mcpServers ?? [] },
+        { timeoutMs: options.timeoutMs ?? 60000 },
+      );
+    } catch (err) {
+      throw fail(ERROR_CODES.session_not_resumable, `session/load was rejected: ${err?.message ?? err}`, {
+        backend: this.backend.id,
+        sessionId: options.nativeSessionId,
+        underlying: { code: err?.code ?? 'unknown', message: err?.message ?? String(err) },
+      });
+    }
+    this.sessionResult = result;
+    this.sessionId = result?.sessionId ?? options.nativeSessionId;
+    return result;
+  }
+
+  /** Normalised init description for session metadata. */
+  describeInit() {
+    const init = this.initializeResult ?? {};
+    return {
+      protocolVersion: init.protocolVersion ?? null,
+      agentInfo: init.agentInfo ?? null,
+      agentCapabilities: init.agentCapabilities ?? null,
+    };
   }
 
   /** Model and effort metadata as the backend actually reported it. */
@@ -243,6 +292,14 @@ export class AcpConnection {
     this.peer?.close();
     const child = this.child;
     if (!child || child.exitCode !== null) return;
+    if (IS_WINDOWS && child.pid) {
+      const terminated = await terminateWindowsProcessTree(child.pid, timeoutMs);
+      if (!terminated) {
+        this.closed = false;
+        throw fail(ERROR_CODES.state_error, `Failed to terminate backend process tree ${child.pid}`);
+      }
+      return;
+    }
     child.kill('SIGTERM');
     await new Promise((resolve) => {
       const timer = setTimeout(() => {

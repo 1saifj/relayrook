@@ -10,7 +10,8 @@ import { fail, ERROR_CODES } from './errors.mjs';
  *
  * @typedef {'acp'|'app-server'} BackendKind
  * @typedef {'configOptions'|'models'|'native'} MetadataStyle
- * @typedef {'launch-flag'|'set_config_option'|'turn-parameter'} ModelSelection
+ * @typedef {'launch-flag'|'set_config_option'|'thread-start'} ModelSelection
+ * @typedef {'launch-flag'|'set_config_option'|'turn-parameter'|null} EffortMechanism
  */
 
 /** @type {Record<string, any>} */
@@ -28,6 +29,7 @@ const REGISTRY = {
     modelSelection: 'launch-flag',
     modelFlag: '--model',
     effortFlag: null,
+    effortMechanism: null,
     // docs/research.md: "Preserve the Devin SWE-2 Max pin". Fixed unless the
     // caller passes --model explicitly; never substituted silently.
     defaultModel: 'swe-2-max',
@@ -52,6 +54,7 @@ const REGISTRY = {
     modelSelection: 'launch-flag',
     modelFlag: '--model',
     effortFlag: '--effort',
+    effortMechanism: 'launch-flag',
     defaultModel: null,
     modelPinPolicy: 'caller-choice',
     // The session response omits effort; `_kiro.dev/metadata` reports it later.
@@ -77,6 +80,7 @@ const REGISTRY = {
     modelConfigId: 'model',
     modelFlag: null,
     effortFlag: null,
+    effortMechanism: 'set_config_option',
     defaultModel: null,
     modelPinPolicy: 'caller-choice',
     effortReadback: true,
@@ -104,6 +108,7 @@ const REGISTRY = {
     modelConfigId: 'model',
     modelFlag: null,
     effortFlag: null,
+    effortMechanism: 'set_config_option',
     defaultModel: null,
     modelPinPolicy: 'caller-choice',
     effortReadback: true,
@@ -120,24 +125,29 @@ const REGISTRY = {
     args: ['app-server', '--stdio'],
     versionArgs: ['--version'],
     adapter: 'native-app-server',
-    // v0.1 implements discovery only (initialize, model/list, account/read).
-    // Turn control (thread/start, turn/start, turn/steer, turn/interrupt,
-    // review/start) is NOT implemented and must not be advertised as working.
-    sessionSupport: 'not-implemented',
-    sessionSupportReason:
-      'v0.1 implements Codex app-server discovery only (initialize, model/list, account/read).' +
-      ' Thread and turn control are not implemented.',
+    sessionSupport: 'implemented',
+    // Codex maps sessions onto threads and turns. Model is pinned at
+    // thread/start and read back from the response; effort is a per-turn
+    // parameter verified through thread/read after the turn starts.
     metadataStyle: 'native',
-    modelSelection: 'turn-parameter',
+    modelSelection: 'thread-start',
+    effortMechanism: 'turn-parameter',
     modelFlag: null,
     effortFlag: null,
     defaultModel: null,
     modelPinPolicy: 'caller-choice',
-    effortReadback: false,
+    effortReadback: true,
+    // thread/resume restores a persisted thread; RelayRook starts threads with
+    // ephemeral:false so a dead worker can be restarted without losing context.
+    resumeMechanism: 'thread/resume',
+    steerMechanism: 'turn/steer',
+    reviewMechanism: 'review/start',
     provider: 'openai',
     modelFamily: 'openai',
     billingRoute: 'chatgpt-subscription',
-    notes: 'Discovery only in v0.1. Not eligible for delegation routes.',
+    notes:
+      'Native app-server protocol. Sandbox follows the session profile' +
+      ' (read-only reviews run sandboxed read-only with approvals off).',
   },
 };
 

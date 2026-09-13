@@ -118,10 +118,25 @@ test('concurrent cold starts serialize to one worker', async () => {
   await stopSession({ stateDir: ctx.stateDir, key: first.key });
 });
 
-test('the control socket and session directory are private', () => {
+test('the control socket and session directory are private', { skip: process.platform === 'win32' }, () => {
   const store = new SessionStore(ctx.stateDir, ctx.key);
   assert.equal(statSync(store.dir).mode & 0o777, 0o700);
   assert.equal(statSync(store.socketPath).mode & 0o777, 0o600);
+});
+
+test('every control call must carry the per-session token', async () => {
+  const store = new SessionStore(ctx.stateDir, ctx.key);
+  const { callControl } = await import('../src/control.mjs');
+  await assert.rejects(
+    callControl(store.socketPath, 'status', {}, { timeoutMs: 3000 }),
+    (/** @type {any} */ err) => err.code === ERROR_CODES.control_unauthorized,
+  );
+  await assert.rejects(
+    callControl(store.socketPath, 'status', {}, { timeoutMs: 3000, token: 'forged-token' }),
+    (/** @type {any} */ err) => err.code === ERROR_CODES.control_unauthorized,
+  );
+  const authed = await callControl(store.socketPath, 'status', {}, { timeoutMs: 3000, token: store.readControlToken() });
+  assert.equal(authed.status, 'ready');
 });
 
 test('a prompt runs to a completed turn with a protocol stop reason', async () => {
@@ -338,10 +353,10 @@ test('stop shuts the worker down and state stays readable afterwards', async () 
   ctx.key = null;
 });
 
-test('a backend whose session control is unimplemented refuses to start', async () => {
+test('an unknown backend is refused before any session state is written', async () => {
   await assert.rejects(
-    startSession({ stateDir: ctx.stateDir, backend: 'codex', workspace: ctx.workspace }),
-    (/** @type {any} */ err) => err.code === ERROR_CODES.session_control_not_implemented,
+    startSession({ stateDir: ctx.stateDir, backend: 'no-such-backend', workspace: ctx.workspace }),
+    (/** @type {any} */ err) => err.code === ERROR_CODES.unknown_backend,
   );
 });
 

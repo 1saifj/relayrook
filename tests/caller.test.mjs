@@ -8,10 +8,14 @@ import {
   routeEnvelopeEnv,
   parseRouteEnvelope,
   collectEnvEvidence,
+  normalizeCallerId,
+  signEnvelopePayload,
   CALLER_CONFIDENCE,
   ROUTE_ENV_VAR,
 } from '../src/caller.mjs';
 import { ERROR_CODES } from '../src/errors.mjs';
+
+const TEST_KEY = Buffer.alloc(32, 7);
 
 test('explicit --caller wins over conflicting environment evidence', () => {
   const state = resolveCaller({
@@ -25,22 +29,67 @@ test('explicit --caller wins over conflicting environment evidence', () => {
 });
 
 test('router-owned delegation metadata outranks environment inference', () => {
-  const env = {
-    CODEX_THREAD_ID: 'thread-1',
-    [ROUTE_ENV_VAR]: JSON.stringify({
-      rootCaller: 'claude-code',
-      parent: 'relayrook',
-      routeId: 'route-9',
-      depth: 2,
-      ancestry: ['devin'],
-    }),
+  const envelope = {
+    rootCaller: 'claude-code',
+    parent: 'relayrook',
+    routeId: 'route-9',
+    depth: 2,
+    ancestry: ['devin'],
   };
-  const state = resolveCaller({ env, parentProcess: null });
+  envelope.integrity = signEnvelopePayload(envelope, TEST_KEY);
+  const env = { CODEX_THREAD_ID: 'thread-1', [ROUTE_ENV_VAR]: JSON.stringify(envelope) };
+  const state = resolveCaller({ env, parentProcess: null, routeKey: TEST_KEY });
   assert.equal(state.confidence, CALLER_CONFIDENCE.delegated);
   assert.equal(state.rootCaller, 'claude-code');
   assert.equal(state.immediateParent, 'relayrook');
   assert.equal(state.depth, 2);
   assert.deepEqual(state.ancestry, ['devin']);
+});
+
+test('an unsigned or forged route envelope is refused, not trusted', () => {
+  const unsigned = {
+    [ROUTE_ENV_VAR]: JSON.stringify({ rootCaller: 'x', parent: 'relayrook', routeId: 'r', depth: 1, ancestry: [] }),
+  };
+  assert.throws(
+    () => resolveCaller({ env: unsigned, parentProcess: null, routeKey: TEST_KEY }),
+    (/** @type {any} */ err) => err.code === ERROR_CODES.route_envelope_invalid,
+  );
+
+  const forged = {
+    rootCaller: 'x', parent: 'relayrook', routeId: 'r', depth: 1, ancestry: [],
+    integrity: signEnvelopePayload(
+      { rootCaller: 'x', parent: 'relayrook', routeId: 'r', depth: 1, ancestry: [] },
+      Buffer.alloc(32, 1),
+    ),
+  };
+  assert.throws(
+    () => resolveCaller({ env: { [ROUTE_ENV_VAR]: JSON.stringify(forged) }, parentProcess: null, routeKey: TEST_KEY }),
+    (/** @type {any} */ err) => err.code === ERROR_CODES.route_envelope_invalid,
+  );
+
+  // An envelope minted without a key stays untrusted: parsing reports it and
+  // resolution refuses it when the resolver has a key to check against.
+  const parsed = parseRouteEnvelope(unsigned, TEST_KEY);
+  assert.equal(parsed.malformed, false);
+  assert.equal(parsed.trusted, false);
+  assert.equal(parsed.unsigned, true);
+});
+
+test('arbitrary normalized host ids are accepted; malformed ids are not', () => {
+  assert.equal(normalizeCallerId('My_Custom-Host'), 'my_custom-host');
+  assert.equal(normalizeCallerId('harness_9'), 'harness_9');
+  assert.equal(normalizeCallerId('has.dot'), null);
+  assert.equal(normalizeCallerId('bad id!'), null);
+  assert.equal(normalizeCallerId(''), null);
+  assert.equal(normalizeCallerId(42), null);
+  const state = resolveCaller({ explicitCaller: 'Future-Harness_9', env: {}, parentProcess: null });
+  assert.equal(state.immediateParent, 'future-harness_9');
+  assert.equal(state.knownHost, false);
+  assert.equal(state.confidence, CALLER_CONFIDENCE.explicit);
+  assert.throws(
+    () => resolveCaller({ explicitCaller: 'bad id!', env: {}, parentProcess: null }),
+    (/** @type {any} */ err) => err.code === ERROR_CODES.usage,
+  );
 });
 
 test('a single host signal is inferred, not asserted', () => {
@@ -107,28 +156,29 @@ test('a backend already in the ancestry is refused unless explicitly allowed', (
   assert.doesNotThrow(() => assertNoRecursion({ callerState, backend: 'kiro' }));
 });
 
-test('the child envelope records root caller, parent, depth and ancestry', () => {
+test('the child envelope records root caller, parent, depth, ancestry and a signature', () => {
   const callerState = { rootCaller: 'codex', immediateParent: 'codex', depth: 0, ancestry: [] };
-  const envelope = childRouteEnvelope({ callerState, backend: 'devin', routeId: 'r1' });
-  assert.deepEqual(envelope, {
-    rootCaller: 'codex',
-    parent: 'relayrook',
-    routeId: 'r1',
-    depth: 1,
-    ancestry: ['devin'],
-  });
+  const envelope = childRouteEnvelope({ callerState, backend: 'devin', routeId: 'r1', routeKey: TEST_KEY });
+  assert.equal(envelope.rootCaller, 'codex');
+  assert.equal(envelope.parent, 'relayrook');
+  assert.equal(envelope.routeId, 'r1');
+  assert.equal(envelope.depth, 1);
+  assert.deepEqual(envelope.ancestry, ['devin']);
+  assert.match(envelope.integrity, /^v1\.[0-9a-f]{64}$/);
   const env = routeEnvelopeEnv(envelope);
-  assert.deepEqual(parseRouteEnvelope(env).ancestry, ['devin']);
+  const parsed = parseRouteEnvelope(env, TEST_KEY);
+  assert.deepEqual(parsed.ancestry, ['devin']);
+  assert.equal(parsed.trusted, true);
 });
 
 test('depth and ancestry accumulate across hops', () => {
   let state = resolveCaller({ explicitCaller: 'codex', env: {}, parentProcess: null });
-  let env = routeEnvelopeEnv(childRouteEnvelope({ callerState: state, backend: 'devin', routeId: 'r1' }));
-  state = resolveCaller({ env, parentProcess: null });
+  let env = routeEnvelopeEnv(childRouteEnvelope({ callerState: state, backend: 'devin', routeId: 'r1', routeKey: TEST_KEY }));
+  state = resolveCaller({ env, parentProcess: null, routeKey: TEST_KEY });
   assert.equal(state.depth, 1);
 
-  env = routeEnvelopeEnv(childRouteEnvelope({ callerState: state, backend: 'kiro', routeId: 'r2' }));
-  state = resolveCaller({ env, parentProcess: null });
+  env = routeEnvelopeEnv(childRouteEnvelope({ callerState: state, backend: 'kiro', routeId: 'r2', routeKey: TEST_KEY }));
+  state = resolveCaller({ env, parentProcess: null, routeKey: TEST_KEY });
   assert.equal(state.depth, 2);
   assert.deepEqual(state.ancestry, ['devin', 'kiro']);
   assert.equal(state.rootCaller, 'codex');

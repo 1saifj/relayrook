@@ -1,0 +1,32 @@
+{
+  "id": "review-cart",
+  "role": "code-review",
+  "task": "Review cart.mjs as a complete change. Report correctness defects only, with file and line evidence. Expected behavior: the bulk threshold applies after the percentage discount; removing an item must leave the caller-owned input array unchanged; currency totals use decimal half-up rounding to cents (1.005 becomes 1.01).",
+  "findings": [
+    {
+      "id": "bulk-threshold-pre-discount",
+      "path": "cart.mjs",
+      "line": 12,
+      "summary": "The bulk threshold compares the pre-discount total, so orders that drop below $100 after the percent discount still receive the extra bulk reduction."
+    },
+    {
+      "id": "removeitem-mutates-input",
+      "path": "cart.mjs",
+      "line": 31,
+      "summary": "removeItem splices the caller's array in place; callers that reuse the cart see items disappear without assignment."
+    },
+    {
+      "id": "tofixed-bankers-rounding",
+      "path": "cart.mjs",
+      "line": 25,
+      "summary": "toFixed uses round-half-away/binary representation, so totals like 1.005 display as 1.00 instead of 1.01."
+    }
+  ],
+  "cleanRegions": [
+    {
+      "path": "cart.mjs",
+      "line": 4,
+      "note": "lineTotal is a plain multiplication; not a defect."
+    }
+  ]
+}

@@ -122,12 +122,17 @@ test('findConfigOption prefers category then falls back to id patterns', () => {
   assert.equal(findConfigOption(undefined, 'model', []), null);
 });
 
-test('Codex declares discovery-only session support with a stated reason', () => {
+test('Codex declares full app-server session support with its native mechanisms', () => {
   const codex = getBackend('codex');
-  assert.equal(codex.sessionSupport, 'not-implemented');
-  assert.match(codex.sessionSupportReason, /not implemented/i);
+  assert.equal(codex.sessionSupport, 'implemented');
+  assert.equal(codex.kind, 'app-server');
+  assert.equal(codex.resumeMechanism, 'thread/resume');
+  assert.equal(codex.steerMechanism, 'turn/steer');
+  assert.equal(codex.reviewMechanism, 'review/start');
+  assert.equal(codex.modelSelection, 'thread-start');
+  assert.equal(codex.effortMechanism, 'turn-parameter');
   const implemented = allBackends().filter((b) => b.sessionSupport === 'implemented').map((b) => b.id);
-  assert.deepEqual(implemented.sort(), ['claude', 'devin', 'kiro', 'opencode']);
+  assert.deepEqual(implemented.sort(), ['claude', 'codex', 'devin', 'kiro', 'opencode']);
 });
 
 test('effort readback support is recorded per backend', () => {

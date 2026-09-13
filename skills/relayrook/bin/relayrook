@@ -1,0 +1,6 @@
+#!/bin/sh
+# Self-locating launcher: runs the bundled runtime next to this script, from
+# any working directory and with spaces in the install path.
+set -eu
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+exec node "$SCRIPT_DIR/../scripts/relayrook.mjs" "$@"

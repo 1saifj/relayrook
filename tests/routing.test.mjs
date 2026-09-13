@@ -49,30 +49,55 @@ test('uninstalled backends are rejected with a reason, not silently skipped', ()
   assert.equal(devin.reason, 'not-installed');
 });
 
-test('Codex is rejected for session roles because its session control is unimplemented', () => {
+test('Codex is eligible for session roles through the app-server protocol', () => {
   const result = route({
     role: 'code-review',
-    inventory: inventory(['codex', 'kiro']),
+    pins: { agent: 'codex' },
+    inventory: inventory(['codex']),
     callerState: noCaller,
   });
-  assert.notEqual(result.selected.backend, 'codex');
-  const rejection = result.rejected.find((r) => r.backend === 'codex');
-  // Codex is not in the code-review table at all, so the rejection only appears
-  // when it is explicitly pinned; that case is covered below.
-  assert.ok(rejection === undefined || rejection.reason === 'session-control-not-implemented');
+  assert.equal(result.selected.backend, 'codex');
+  // Codex candidates are in the role tables but are not turn-verified yet;
+  // the basis label says so rather than implying evaluation evidence.
+  assert.equal(result.selected.evidenceBasis, 'configured-preference');
+});
 
-  assert.throws(
-    () =>
-      route({
-        role: 'code-review',
-        pins: { agent: 'codex' },
-        inventory: inventory(['codex']),
-        callerState: noCaller,
-      }),
-    (/** @type {any} */ err) =>
-      err.code === ERROR_CODES.pin_unsatisfiable &&
-      err.details.rejected.some((r) => r.reason === 'session-control-not-implemented'),
-  );
+test('measured route evidence outweighs configured weight once it exists', () => {
+  // Without evidence OpenCode's configured weight beats Kiro's.
+  const baseline = route({
+    role: 'implementation',
+    inventory: inventory(['kiro', 'opencode']),
+    callerState: noCaller,
+  });
+  assert.equal(baseline.selected.backend, 'opencode');
+
+  const evidence = {
+    routes: {
+      // Two or more completed runs make a route measured, not anecdotal.
+      'implementation|kiro|claude-opus-5|max': { runs: 2, successRate: 1, precision: 1 },
+      // A single run is not enough to count as measured.
+      'implementation|opencode|opencode-go/kimi-k2.7-code|': { runs: 1, successRate: 1, precision: 1 },
+    },
+  };
+  const result = route({
+    role: 'implementation',
+    inventory: inventory(['kiro', 'opencode']),
+    callerState: noCaller,
+    routeEvidence: evidence,
+  });
+  assert.equal(result.selected.backend, 'kiro');
+  assert.equal(result.selected.evidenceBasis, 'measured-evaluation');
+  assert.equal(result.evidenceBasis, 'measured+configured');
+  const opencode = result.rejected.find((r) => r.backend === 'opencode');
+  assert.equal(opencode.reason, 'lower-score');
+});
+
+test('measured evidence keys include role, backend, model and effort', async () => {
+  const { routeEvidenceKey, isMeasured } = await import('../src/routing.mjs');
+  assert.equal(routeEvidenceKey('code-review', 'codex', 'gpt-5.6-sol', 'high'), 'code-review|codex|gpt-5.6-sol|high');
+  assert.equal(isMeasured({ runs: 2 }), true);
+  assert.equal(isMeasured({ runs: 1 }), false);
+  assert.equal(isMeasured(null), false);
 });
 
 test('an agent pin narrows the field to exactly that backend', () => {

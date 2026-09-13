@@ -1,5 +1,5 @@
 {
-  "status": "proposed fixtures; not yet executed",
+  "status": "fixtures and runner shipped; executed on codex, repeatable per backend",
   "trigger_cases": [
     {
       "prompt": "Use the best installed coding agent to implement the pagination fix.",
@@ -190,5 +190,32 @@
       ]
     }
   },
-  "evaluation_design": "Keep held-out trigger and code fixtures. Compare skill versus baseline/previous version. Repeat representative cases; record host, backend, model, provider, effort, versions, and environment."
+  "evaluation_design": "Keep held-out trigger and code fixtures. Compare skill versus baseline/previous version. Repeat representative cases; record host, backend, model, provider, effort, versions, and environment.",
+  "comparison_protocol": {
+    "runner": "evals/run.mjs --backend <id> --runs N",
+    "repetition": "each fixture runs N times per backend per invocation; entries merge into <state>/route-evidence.json across invocations",
+    "measured_threshold": "a route key counts as measured at runs >= 2; fewer runs stay anecdotal and do not shift route scoring",
+    "dimensions": [
+      "success (typed turn outcome plus fixture check, never exit code alone)",
+      "precision and recall against seeded findings",
+      "scope compliance (changes outside the fixture's allowed files fail the run)",
+      "latency (wall-clock turn time)",
+      "usage (the normalized record below)"
+    ],
+    "usage_record": {
+      "fields": [
+        "uncachedInputTokens",
+        "cachedInputTokens",
+        "cacheWriteInputTokens",
+        "outputTokens",
+        "reasoningOutputTokens",
+        "totalTokens",
+        "eventCount",
+        "latencyMs",
+        "rateLimits"
+      ],
+      "raw": "the provider payload is preserved verbatim under raw",
+      "unknown": "a field the provider did not report is null, never zero or estimated"
+    }
+  }
 }

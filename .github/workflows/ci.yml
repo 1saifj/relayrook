@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'release/**']
   pull_request:
   workflow_dispatch:
 
@@ -16,10 +16,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # macOS is where the backends were researched; Linux is added so the
-        # runtime's own behaviour is covered on a second platform. Windows is
-        # not claimed and is not built here.
-        os: [macos-latest, ubuntu-latest]
+        # macOS is where the backends were researched; Linux and Windows cover
+        # the two control transports (unix sockets, named pipes).
+        os: [macos-latest, ubuntu-latest, windows-latest]
         node: ['22.13.0', '24']
     steps:
       - uses: actions/checkout@v4

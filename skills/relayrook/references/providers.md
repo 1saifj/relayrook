@@ -48,27 +48,50 @@ advertised model is weaker evidence than a completed turn.
   permission modes (`default`, `acceptEdits`, `plan`, `auto`,
   `bypassPermissions`) and a `model` option.
 - The adapter advertised a steering extension and prompt queueing. RelayRook
-  v0.1 does not use either, and does not present cancellation as equivalent to
+  does not use either, and does not present cancellation as equivalent to
   steering.
 - Session creation, `opus[1m]`, `max` effort, and a completed inference turn
   were verified through RelayRook.
 
 ## Codex — `codex app-server --stdio`
 
-- **Discovery only in v0.1.** `initialize`, `model/list` and `account/read` are
-  implemented, which is what `doctor --probe` reports. The app-server omits the
-  `jsonrpc` envelope field, which the adapter handles.
-- Thread and turn control (`thread/start`, `turn/start`, `turn/steer`,
-  `turn/interrupt`, `review/start`) are **not implemented**. `start --backend
-  codex` fails with `session_control_not_implemented`, and routing rejects
-  Codex with that reason rather than pretending the session behaviour exists.
+- Native app-server protocol over stdio JSON-RPC. The server omits the
+  `jsonrpc` envelope field; the adapter accepts both framed and bare replies.
+- A RelayRook session is a Codex **thread**: `thread/start` opens it,
+  `thread/resume` restores it after a worker restart, and `thread/read`
+  re-reads it. Model and reasoning effort are requested on the thread and read
+  back from the `thread` object — an unconfirmed substitution fails the start
+  with `model_rejected`.
+- A prompt is `turn/start`; streamed events arrive as `item/*` notifications
+  and the turn ends on `turn/completed`. `turn/steer` feeds additional input
+  to the in-flight turn (`steer` command) and `turn/interrupt` cancels it
+  (`cancel`). `review/start` runs Codex's native review (`review` command)
+  against uncommitted changes, a base branch, a commit, or custom
+  instructions.
+- Sandbox and approval policy map onto app-server values; review roles run
+  with a read-only sandbox and approvals off unless overridden.
+- Approval and permission requests surface as pending permissions with the
+  advertised options; v1 (`execCommandApproval`/`applyPatchApproval`) and v2
+  (`item/tool/call`) request shapes are both mapped.
+- A method-not-found reply means the installed Codex predates the v2 surface —
+  reported as `unsupported_backend_version`, not a generic protocol error.
+  Verified against Codex `0.153.4`.
 - `account/read` is reduced to a presence flag and an account type. No
   identifier, e-mail, plan detail or token reaches RelayRook output.
+- `thread/tokenUsage/updated` carries cumulative input/cached/output/
+  reasoning counters; `account/rateLimits/updated` carries window utilization.
+  Both land on the turn's normalized usage record — counters under the token
+  fields, the latest rate-limit snapshot under `rateLimits`.
 
 ## Quota
 
 Quota is reported as `unknown` for every backend. Unknown quota and exhausted
-quota are different facts, and RelayRook does not invent a remaining allowance.
+quota are different facts, and RelayRook does not invent a remaining
+allowance. Where a provider does emit rate-limit state, it surfaces as
+`rate_limits` events and the latest snapshot on the turn usage record;
+comparing two snapshots gives a delta — RelayRook records snapshots and never
+invents one. ACP `session/usage_update` payloads report context-window
+occupancy (`used`/`size`), not billing totals, and normalize accordingly.
 Failover stays inside the configured policy: a quota or transport error never
 moves work to a differently billed provider on its own, and a provider policy
 refusal is reported, not routed around.

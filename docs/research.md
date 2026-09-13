@@ -1,8 +1,8 @@
 # RelayRook: research and design
 
-Researched on 2026-09-13. This is the design and validation plan for the next implementation phase. The existing `devin-acp` skill is installed and tested; a universal router and its public repository have not been published.
+Protocol research recorded on 2026-09-13. RelayRook packages a portable Agent Skill and a dependency-free runtime at `1saifj/relayrook`. The [compatibility matrix](compatibility.md) records execution evidence and its limits.
 
-The proposed product is one small Agent Skill backed by a tested runtime. It discovers local agents and their account-visible models, chooses a route for implementation or review, and controls a persistent agent session. Prefer ACP for portability and a native structured interface when it provides a demonstrated advantage. A skill alone cannot guarantee access to every host's tools or infer a user's subscriptions from installed binaries.
+RelayRook is one small Agent Skill backed by a tested runtime. It discovers local agents and their account-visible models, chooses a route for implementation or review, and controls a persistent agent session. Prefer ACP for portability and a native structured interface when it provides a demonstrated advantage. A skill alone cannot guarantee access to every host's tools or infer a user's subscriptions from installed binaries.
 
 ## 1. What is actually available here
 
@@ -66,21 +66,13 @@ Observed protocol differences are material:
 - Capabilities such as filesystem access, terminal ownership, load, fork, and live configuration vary by backend and version. Negotiate them; do not hard-code assumptions from Devin.
 - The earlier Devin tests showed why OS exit status alone is insufficient: print mode returned 0 after a denied tool call. Use typed completion status and actual tool/task evidence.
 
-## 3. Reuse acpx as the ACP foundation
+## 3. Runtime architecture
 
-`acpx` already supplies persistent sessions, structured events, cancellation, a multi-agent registry, and model configuration. Its exported runtime supports an asynchronous permission callback and per-child environment configuration. This is a promising foundation for the ACP portion of the router. [acpx project](https://github.com/openclaw/acpx), [runtime contract](https://github.com/openclaw/acpx/blob/main/src/runtime/public/contract.ts)
+RelayRook implements ACP directly over newline JSON-RPC, with a separate native Codex app-server adapter. The runtime has no production dependencies. Both adapters share persistent workers, session state, event pagination, parent permission decisions, and typed outcomes.
 
-Installed research package: **0.15.1**, requiring Node **22.13.0+**. This machine has Node 22.23.2. Source review used commit `ffbefbbb726b1fd4623b8e51708a17d21b10b576`; verify any source-level assumptions against the pinned package during implementation. The Claude adapter was installed and session-tested at **0.76.0**; package metadata reported Codex ACP adapter **1.11.0**, which was not installed or tested. Pin exact releases; do not rely on `npx @latest` on every turn.
+The `acpx` runtime was evaluated as an architectural reference for persistent sessions, asynchronous permission callbacks, and per-child environment configuration. RelayRook does not embed it. The Claude backend uses the separately bootstrapped `@agentclientprotocol/claude-agent-acp@0.76.0` adapter. [acpx runtime contract](https://github.com/openclaw/acpx/blob/main/src/runtime/public/contract.ts), [Claude adapter](https://github.com/agentclientprotocol/claude-agent-acp)
 
-Integration choices:
-
-1. Embed the `acpx/runtime` API behind our own small `doctor`, `route`, `start`, `send`, `watch`, `steer`, `cancel`, `permission`, and `stop` commands.
-2. Resolve installed binaries directly: `devin acp`, `kiro-cli acp`, and `opencode acp`. Add Devin as a custom registry entry. This also avoids acpx's default Kiro binary-name and OpenCode npx-launch assumptions.
-3. Use the asynchronous runtime permission hook to suspend for the parent controller's decision. The plain acpx CLI's noninteractive escalation path denies the request; it does not provide our existing paused-approval workflow automatically.
-4. Preserve user configuration deliberately. acpx's Claude integration excludes user settings by default, with an opt-in environment setting. This must be a visible compatibility choice because model settings, hooks, and plugins can affect behavior.
-5. Keep native Codex access in a narrow adapter. A future OpenCode server adapter can implement the same internal interface.
-
-These details are in the [acpx CLI reference](https://github.com/openclaw/acpx/blob/main/docs/CLI.md). The runtime still needs conformance tests against our installed agents before adoption; source inspection is not full integration validation.
+Direct executable resolution preserves the user's installed CLIs and authenticated subscription routes. Model and effort requests are read back where supported. Codex's thread and turn primitives remain distinct from ACP prompts and cancellation.
 
 ## 4. Caller and availability detection
 
@@ -183,9 +175,9 @@ Keep requested reasoning effort as an independent quality control. Preserve the 
 
 ## 9. GitHub and skills.sh release path
 
-The selected project name is **RelayRook**, with `relayrook` as the repository and skill slug. The intended public repository is `1saifj/relayrook`; publication and skill installation remain release milestones.
+The project is **RelayRook**, with `relayrook` as the repository and skill slug. The public repository is `1saifj/relayrook`.
 
-Proposed layout:
+Package layout:
 
 ```text
 relayrook/
@@ -200,7 +192,7 @@ relayrook/
   skills/relayrook/
     SKILL.md
     agents/openai.yaml
-    scripts/router.mjs         # Self-contained distribution entrypoint
+    scripts/relayrook.mjs         # Self-contained distribution entrypoint
     references/workflows.md
     references/providers.md
   .github/workflows/ci.yml
@@ -210,7 +202,7 @@ Bundle the runtime into the installed skill, or use an explicit pinned bootstrap
 
 Release sequence: implement and test locally; create the public GitHub repository under `1saifj`; push the reviewed package and tagged release; verify discovery with `npx skills add 1saifj/relayrook --list`; test installation in isolated profiles for the intended hosts; then verify the resulting directory page.
 
-Expected installation command after publication:
+Installation command:
 
 ```bash
 npx skills add 1saifj/relayrook --skill relayrook \
@@ -223,4 +215,4 @@ skills.sh does not require uploading a separate skill package to a marketplace. 
 
 ## Decision
 
-Proceed with one portable skill, an acpx-backed ACP runtime, a narrow native Codex adapter, live inventory, explicit caller metadata, and role-specific evidence. Keep the current Devin skill as the proven reference until the new router passes its compatibility matrix. The first release should make a small set of routes work reliably and state its tested limits.
+RelayRook combines one portable skill, a direct ACP runtime, a native Codex adapter, live inventory, explicit caller metadata, and role-specific evidence. Compatibility claims follow the execution matrix; discovery, successful inference, and task quality are separate results.

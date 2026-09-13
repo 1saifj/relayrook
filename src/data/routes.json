@@ -38,6 +38,14 @@
           "weight": 60,
           "verifiedTurn": true,
           "basis": "Pinned adapter completed a turn with opus[1m] and max effort confirmed."
+        },
+        {
+          "backend": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": "high",
+          "weight": 55,
+          "verifiedTurn": false,
+          "basis": "App-server turn lifecycle implemented; model and effort are read back from thread state."
         }
       ]
     },
@@ -75,6 +83,14 @@
           "weight": 40,
           "verifiedTurn": true,
           "basis": "Usable, but prefer a different family from the implementation route."
+        },
+        {
+          "backend": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": "high",
+          "weight": 50,
+          "verifiedTurn": false,
+          "basis": "Native review/start primitive; sandboxed read-only by profile. Unevaluated for review quality."
         }
       ]
     },
@@ -112,6 +128,14 @@
           "weight": 35,
           "verifiedTurn": true,
           "basis": "Available fallback; prefer an independent reviewer family."
+        },
+        {
+          "backend": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": "high",
+          "weight": 45,
+          "verifiedTurn": false,
+          "basis": "OpenAI family diversifies the Anthropic-heavy review pool; unevaluated for security review."
         }
       ]
     }
@@ -119,6 +143,7 @@
   "scoring": {
     "verifiedTurnBonus": 15,
     "preferredProviderBonus": 10,
-    "independentFamilyBonus": 8
+    "independentFamilyBonus": 8,
+    "measuredBonus": 30
   }
 }

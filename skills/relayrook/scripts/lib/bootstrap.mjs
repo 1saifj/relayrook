@@ -84,11 +84,19 @@ export async function bootstrapAdapter(input) {
  * @param {{cwd: string, timeoutMs: number}} options
  */
 function runNpm(argv, options) {
+  // npm ships as npm.cmd on Windows, which execFile cannot launch without a
+  // shell — so the shell is enabled only there.
+  const win = process.platform === 'win32';
   return new Promise((resolve) => {
     execFile(
-      'npm',
+      win ? 'npm.cmd' : 'npm',
       argv,
-      { cwd: options.cwd, timeout: options.timeoutMs, maxBuffer: 8 * 1024 * 1024 },
+      {
+        cwd: options.cwd,
+        timeout: options.timeoutMs,
+        maxBuffer: 8 * 1024 * 1024,
+        shell: win,
+      },
       (err, stdout, stderr) => {
         resolve({
           ok: !err,

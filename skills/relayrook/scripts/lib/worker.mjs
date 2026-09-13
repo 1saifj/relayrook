@@ -2,14 +2,27 @@ import { createWriteStream } from 'node:fs';
 import path from 'node:path';
 
 import { AcpConnection } from './adapters/acp.mjs';
-import { appendTurnAnswer, EventLog, SessionStore, writeTurnRecord, LIMITS } from './state.mjs';
+import { CodexAppServerConnection } from './adapters/codex.mjs';
+import { appendTurnAnswer, EventLog, SessionStore, writeTurnRecord, LIMITS, SESSION_SCHEMA_VERSION } from './state.mjs';
 import { fail, ERROR_CODES } from './errors.mjs';
 import { getBackend } from './backends.mjs';
 import { serveControl } from './control.mjs';
+import { normalizeUsage } from './usage.mjs';
 import { newId, redactPath, toPositiveInt } from './util.mjs';
+import { processIdentity } from './platform.mjs';
 
 export const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 export const DEFAULT_TURN_TIMEOUT_MS = 20 * 60 * 1000;
+
+/**
+ * Pick the connection implementation for a backend. ACP backends share the
+ * generic connection; the Codex app-server has its own.
+ * @param {any} args
+ */
+export function createBackendConnection(args) {
+  if (args.backend?.kind === 'app-server') return new CodexAppServerConnection(args);
+  return new AcpConnection(args);
+}
 
 /**
  * The persistent session worker.
@@ -17,20 +30,25 @@ export const DEFAULT_TURN_TIMEOUT_MS = 20 * 60 * 1000;
  * It owns one backend child process, keeps a typed turn state machine, records
  * every protocol event with a monotonic cursor, and pauses on permission
  * requests until the parent answers with an option the agent actually offered.
+ *
+ * When the launch spec carries `resume`, the worker re-attaches to the
+ * persisted backend-native session instead of opening a new one. A backend
+ * that cannot resume is reported — the worker never claims continuity it did
+ * not get.
  */
 export class SessionWorker {
   /**
    * @param {{
    *   store: SessionStore,
    *   spec: any,
-   *   createConnection?: (args: any) => AcpConnection,
+   *   createConnection?: (args: any) => any,
    *   now?: () => number,
    * }} options
    */
   constructor(options) {
     this.store = options.store;
     this.spec = options.spec;
-    this.createConnection = options.createConnection ?? ((args) => new AcpConnection(args));
+    this.createConnection = options.createConnection ?? createBackendConnection;
     this.now = options.now ?? (() => Date.now());
     this.log = new EventLog(this.store).load();
     this.connection = null;
@@ -49,11 +67,14 @@ export class SessionWorker {
 
   #baseMeta() {
     return {
+      schemaVersion: SESSION_SCHEMA_VERSION,
       key: this.store.key,
       backend: this.spec.backend,
       workspace: this.spec.workspace,
       profile: this.spec.profile ?? 'default',
       pid: process.pid,
+      backendPid: null,
+      backendCommand: null,
       startedAt: new Date(this.now()).toISOString(),
       updatedAt: new Date(this.now()).toISOString(),
       status: this.status,
@@ -67,6 +88,10 @@ export class SessionWorker {
       modes: null,
       caller: this.spec.caller ?? null,
       route: this.spec.route ?? null,
+      resume: { supported: null, mechanism: null, lastAttempt: null },
+      recovered: false,
+      previousSessions: this.spec.previousSessions ?? [],
+      quota: null,
       turn: null,
       pendingPermissions: [],
       lastError: null,
@@ -89,11 +114,27 @@ export class SessionWorker {
     this.store.writeMeta(this.meta);
   }
 
+  /**
+   * Map the latest provider usage payload onto the canonical record. `null`
+   * fields mean the provider did not report that field; `raw` keeps the
+   * provider payload verbatim for auditing.
+   * @param {any} update
+   */
+  #normalizedUsage(update) {
+    return normalizeUsage(this.spec.backend, update?.usage ?? update, {
+      eventCount: this.turn?.usageEvents ?? null,
+      latencyMs: this.turn?.startedAt ? Math.max(0, this.now() - Date.parse(this.turn.startedAt)) : null,
+      rateLimits: this.connection?.lastRateLimits ?? null,
+    });
+  }
+
   /** @param {any} turn */
   #turnSummary(turn) {
     return {
       id: turn.id,
       state: turn.state,
+      mechanism: turn.mechanism ?? 'prompt',
+      nativeTurnId: turn.nativeTurnId ?? null,
       stopReason: turn.stopReason,
       startedAt: turn.startedAt,
       finishedAt: turn.finishedAt ?? null,
@@ -127,6 +168,8 @@ export class SessionWorker {
       cwd: this.spec.workspace,
       model: this.spec.model ?? null,
       effort: this.spec.effort ?? null,
+      profile: this.spec.profile ?? 'default',
+      codex: this.spec.codex ?? undefined,
       command: this.spec.commandOverride ?? undefined,
       argsPrefix: this.spec.argsOverride ?? undefined,
       env: this.spec.env ?? {},
@@ -138,24 +181,94 @@ export class SessionWorker {
     });
 
     await this.connection.start();
+    this.meta.backendPid = this.connection.child?.pid ?? null;
+    const backendIdentity = await processIdentity(this.meta.backendPid);
+    this.meta.backendCommand = backendIdentity?.command ?? this.connection.child?.spawnfile ?? null;
+    this.meta.backendProcessStartedAt = backendIdentity?.startedAt ?? null;
     const init = await this.connection.initialize(toPositiveInt(this.spec.initTimeoutMs, 60000));
-    this.meta.protocolVersion = init?.protocolVersion ?? null;
-    this.meta.agentInfo = init?.agentInfo ?? null;
-    this.meta.agentCapabilities = init?.agentCapabilities ?? null;
+    const described =
+      typeof this.connection.describeInit === 'function'
+        ? this.connection.describeInit()
+        : {
+            protocolVersion: init?.protocolVersion ?? null,
+            agentInfo: init?.agentInfo ?? null,
+            agentCapabilities: init?.agentCapabilities ?? null,
+          };
+    this.meta.protocolVersion = described.protocolVersion;
+    this.meta.agentInfo = described.agentInfo;
+    this.meta.agentCapabilities = described.agentCapabilities;
 
-    await this.connection.newSession({
-      cwd: this.spec.workspace,
-      timeoutMs: toPositiveInt(this.spec.sessionTimeoutMs, 120000),
-    });
-    this.meta.sessionId = this.connection.sessionId;
+    const resume = this.spec.resume ?? null;
+    const canResume = typeof this.connection.resumeSession === 'function';
+    this.meta.resume.mechanism = canResume ? (backend.resumeMechanism ?? 'session/load') : null;
+    this.meta.resume.supported = canResume ? null : false;
+
+    if (resume?.nativeSessionId && canResume) {
+      this.meta.resume.lastAttempt = { at: new Date(this.now()).toISOString(), nativeSessionId: resume.nativeSessionId };
+      await this.connection.resumeSession({
+        nativeSessionId: resume.nativeSessionId,
+        cwd: this.spec.workspace,
+        timeoutMs: toPositiveInt(this.spec.sessionTimeoutMs, 120000),
+      });
+      this.meta.sessionId = this.connection.sessionId;
+      this.meta.resume.supported = true;
+      this.meta.recovered = this.meta.sessionId === resume.nativeSessionId;
+      this.#emit({
+        kind: 'session_recovered',
+        nativeSessionId: this.meta.sessionId,
+        mechanism: this.meta.resume.mechanism,
+      });
+    } else {
+      if (resume?.nativeSessionId) {
+        // The backend cannot resume; the spec decides whether to fail closed
+        // or continue on a fresh native session — either way it is recorded.
+        if (resume.policy === 'required') {
+          throw fail(ERROR_CODES.session_not_resumable, `${backend.id} does not support session resume`, {
+            backend: backend.id,
+            nativeSessionId: resume.nativeSessionId,
+          });
+        }
+        this.meta.resume.supported = false;
+        this.#emit({
+          kind: 'session_not_resumable',
+          nativeSessionId: resume.nativeSessionId,
+          reason: 'backend has no resume primitive; starting a fresh native session',
+        });
+      }
+      if (typeof this.connection.createSession === 'function') {
+        await this.connection.createSession({
+          cwd: this.spec.workspace,
+          timeoutMs: toPositiveInt(this.spec.sessionTimeoutMs, 120000),
+        });
+      } else {
+        await this.connection.newSession({
+          cwd: this.spec.workspace,
+          timeoutMs: toPositiveInt(this.spec.sessionTimeoutMs, 120000),
+        });
+      }
+      this.meta.sessionId = this.connection.sessionId;
+    }
+
+    if (backend.id === 'codex' && this.connection.policies) {
+      this.meta.codex = {
+        sandbox: this.connection.policies.sandbox,
+        approvalPolicy: this.connection.policies.approvalPolicy,
+      };
+    }
 
     await this.#applyModelAndEffort();
 
     this.status = 'ready';
-    this.#emit({ kind: 'session_ready', sessionId: this.connection.sessionId, backend: backend.id });
+    this.#emit({
+      kind: 'session_ready',
+      sessionId: this.connection.sessionId,
+      backend: backend.id,
+      recovered: this.meta.recovered,
+    });
     this.#saveMeta();
 
-    this.server = await serveControl(this.store.socketPath, this.#handlers());
+    const token = this.store.mintControlToken();
+    this.server = await serveControl(this.store.socketPath, this.#handlers(), { token });
     this.#resetIdleTimer();
     return this;
   }
@@ -187,8 +300,9 @@ export class SessionWorker {
       }
       this.meta.model = { requested, observed: selection.observed, source, verified: true };
     } else {
-      // Launch-flag backends (Devin, Kiro) get the model at spawn time; the
-      // session response is the only readback available.
+      // Launch-flag backends (Devin, Kiro) get the model at spawn time; Codex
+      // sets it in thread/start. Either way the session response is the only
+      // readback available.
       const observed = metadata.model.currentModel;
       const verified = Boolean(requested) && observed === requested;
       this.meta.model = { requested, observed, source, verified };
@@ -198,6 +312,9 @@ export class SessionWorker {
           observed,
         });
       }
+      if (requested && !observed && backend.modelSelection === 'thread-start') {
+        throw fail(ERROR_CODES.model_rejected, `Backend did not report the model it selected`, { requested });
+      }
     }
 
     const effort = this.spec.effort ?? null;
@@ -206,7 +323,11 @@ export class SessionWorker {
         requested: null,
         observed: metadata.effort.currentEffort,
         verified: false,
-        support: metadata.effort.configId ? 'advertised' : 'not-advertised',
+        support: metadata.effort.configId
+          ? 'advertised'
+          : backend.effortMechanism === 'turn-parameter'
+            ? 'turn-parameter'
+            : 'not-advertised',
       };
       return;
     }
@@ -217,6 +338,20 @@ export class SessionWorker {
         observed: result.observed,
         verified: result.verified === true,
         support: 'set_config_option',
+      };
+      return;
+    }
+    if (backend.effortMechanism === 'turn-parameter') {
+      // Codex applies effort per turn and reports it through thread/read once
+      // the first turn is running; verification lands via the
+      // `_codex/threadSettings` readback notification.
+      const advertised = metadata.effort.availableEfforts;
+      this.meta.effort = {
+        requested: effort,
+        observed: metadata.effort.currentEffort,
+        verified: false,
+        support: advertised.length === 0 || advertised.includes(effort) ? 'turn-parameter' : 'turn-parameter-unadvertised',
+        availableEfforts: advertised,
       };
       return;
     }
@@ -241,6 +376,17 @@ export class SessionWorker {
         this.meta.effort.support = 'agent-notification';
         this.#saveMeta();
       }
+    }
+    if (kind === 'agent_notification' && update?.method === '_codex/threadSettings') {
+      const observed = update?.params?.effort ?? null;
+      const model = update?.params?.model ?? null;
+      if (observed) {
+        this.meta.effort.observed = observed;
+        if (this.meta.effort.requested) this.meta.effort.verified = observed === this.meta.effort.requested;
+      }
+      if (model) this.meta.model.threadReadback = model;
+      if (update?.params?.sandbox && this.meta.codex) this.meta.codex.sandbox = update.params.sandbox;
+      this.#saveMeta();
     }
     switch (kind) {
       case 'agent_message_chunk': {
@@ -267,12 +413,41 @@ export class SessionWorker {
       case 'tool_call_update':
         this.#emit({ kind: 'tool_call_update', update });
         break;
+      case 'codex_item':
+        this.#emit({ kind: 'tool_call', update: { item: update.item, phase: update.phase } });
+        break;
       case 'plan':
         this.#emit({ kind: 'plan', update });
         break;
+      case 'turn_diff':
+        this.#emit({ kind: 'diff', text: update?.text ?? '' });
+        break;
       case 'usage_update':
-        if (this.turn) this.turn.usage = update;
+        if (this.turn) {
+          this.turn.usageEvents += 1;
+          this.turn.usage = this.#normalizedUsage(update);
+        }
         this.#emit({ kind: 'usage_update', update });
+        break;
+      case 'model_rerouted':
+        // A mid-turn model substitution is material evidence: the model that
+        // produced the output may not be the model that was requested.
+        this.meta.model.rerouted = { from: update.from ?? null, to: update.to ?? null, reason: update.reason ?? null };
+        this.#emit({ kind: 'model_rerouted', from: update.from ?? null, to: update.to ?? null, reason: update.reason ?? null });
+        this.#saveMeta();
+        break;
+      case 'rate_limits':
+        this.meta.quota = { state: 'observed', ...update.rateLimits };
+        this.#emit({ kind: 'rate_limits', rateLimits: update.rateLimits });
+        this.#saveMeta();
+        break;
+      case 'server_error':
+        this.#emit({
+          kind: 'error',
+          code: 'server_error',
+          message: JSON.stringify(update.error ?? null).slice(0, 500),
+          willRetry: update.willRetry,
+        });
         break;
       default:
         this.#emit({ kind: 'agent_update', update });
@@ -350,6 +525,8 @@ export class SessionWorker {
       ping: async () => ({ ok: true, status: this.status, meta: this.meta }),
       meta: async () => ({ meta: this.meta }),
       prompt: async (params) => this.submitPrompt(params),
+      steer: async (params) => this.steerTurn(params),
+      review: async (params) => this.startReview(params),
       status: async (params) => this.readStatus(params),
       cancel: async (params) => this.cancelTurn(params),
       permission: async (params) => this.answerPermission(params),
@@ -361,12 +538,13 @@ export class SessionWorker {
   }
 
   /**
-   * Submit one turn. Overlapping an active turn is refused with a typed error
-   * rather than queued, so a caller can never accidentally interleave two
-   * mutating prompts against the same workspace.
-   * @param {{text: string, timeoutMs?: number, metadata?: any}} params
+   * Begin a turn, whatever mechanism drives it. Overlapping an active turn is
+   * refused with a typed error rather than queued, so a caller can never
+   * accidentally interleave two mutating prompts against the same workspace.
+   * @param {{text?: string, review?: {target: any, delivery: string}, mechanism: string,
+   *   timeoutMs?: number, metadata?: any}} params
    */
-  async submitPrompt(params) {
+  async #startTurn(params) {
     this.#resetIdleTimer();
     if (this.turn && (this.turn.state === 'running' || this.turn.state === 'awaiting-permission')) {
       throw fail(ERROR_CODES.active_turn, 'A turn is already active on this session', {
@@ -377,14 +555,14 @@ export class SessionWorker {
     if (this.status !== 'ready') {
       throw fail(ERROR_CODES.session_not_running, `Session is ${this.status}`, { status: this.status });
     }
-    const text = String(params?.text ?? '');
-    if (text.trim() === '') throw fail(ERROR_CODES.usage, 'Prompt text is empty');
 
     const turnId = newId();
     const timeoutMs = toPositiveInt(params?.timeoutMs, DEFAULT_TURN_TIMEOUT_MS);
     this.turn = {
       id: turnId,
       state: 'running',
+      mechanism: params.mechanism,
+      nativeTurnId: null,
       stopReason: null,
       startedAt: new Date(this.now()).toISOString(),
       finishedAt: null,
@@ -393,13 +571,15 @@ export class SessionWorker {
       answerChars: 0,
       answerTruncated: false,
       usage: null,
+      usageEvents: 0,
       events: [],
       error: null,
-      prompt: text,
+      prompt: params.text ?? null,
+      reviewTarget: params.review?.target ?? null,
       metadata: params?.metadata ?? null,
     };
-    writeTurnRecord(this.store, turnId, { prompt: text, answer: '' });
-    this.#emit({ kind: 'turn_started', prompt_chars: text.length });
+    writeTurnRecord(this.store, turnId, { prompt: params.text ?? '', answer: '' });
+    this.#emit({ kind: 'turn_started', mechanism: params.mechanism, prompt_chars: params.text?.length ?? 0 });
     this.#saveMeta();
 
     const timer = setTimeout(() => {
@@ -413,8 +593,9 @@ export class SessionWorker {
     }, timeoutMs);
     timer.unref?.();
 
-    this.connection
-      .prompt(text)
+    const drive = params.review ? this.connection.review(params.review) : this.connection.prompt(params.text);
+    if (this.connection.activeTurnId) this.turn.nativeTurnId = this.connection.activeTurnId;
+    drive
       .then(
         (result) => this.#finishTurn(turnId, result, null),
         (err) => this.#finishTurn(turnId, null, err),
@@ -422,6 +603,70 @@ export class SessionWorker {
       .finally(() => clearTimeout(timer));
 
     return { turnId, state: 'running', startedAt: this.turn.startedAt };
+  }
+
+  /**
+   * Submit one prompt turn.
+   * @param {{text: string, timeoutMs?: number, metadata?: any}} params
+   */
+  async submitPrompt(params) {
+    const text = String(params?.text ?? '');
+    if (text.trim() === '') throw fail(ERROR_CODES.usage, 'Prompt text is empty');
+    return this.#startTurn({ text, mechanism: 'prompt', timeoutMs: params?.timeoutMs, metadata: params?.metadata });
+  }
+
+  /**
+   * Native review primitive (Codex `review/start`). Backends without one
+   * report a typed unsupported error; the generic path is `prompt` with the
+   * code-review role, which is what `relayrook prompt --role code-review`
+   * already does.
+   * @param {{target?: any, delivery?: string, timeoutMs?: number}} params
+   */
+  async startReview(params) {
+    if (typeof this.connection.review !== 'function') {
+      throw fail(
+        ERROR_CODES.capability_unsupported,
+        `${this.spec.backend} has no native review primitive; use prompt --role code-review instead`,
+        { capability: 'review', backend: this.spec.backend },
+      );
+    }
+    if (this.meta.profile !== 'read-only' || this.meta.codex?.sandbox !== 'read-only') {
+      throw fail(
+        ERROR_CODES.role_posture_mismatch,
+        'Native review requires a read-only session; start the session with --role code-review or --profile read-only',
+        { profile: this.meta.profile, sandbox: this.meta.codex?.sandbox ?? null },
+      );
+    }
+    return this.#startTurn({
+      review: { target: params?.target ?? { type: 'uncommittedChanges' }, delivery: params?.delivery ?? 'inline' },
+      mechanism: 'review/start',
+      timeoutMs: params?.timeoutMs,
+    });
+  }
+
+  /**
+   * Steer the active turn with additional input. Only backends with a real
+   * steering primitive (Codex `turn/steer`) support this; it is a different
+   * operation from cancellation and is never silently mapped onto it.
+   * @param {{text?: string}} params
+   */
+  async steerTurn(params) {
+    if (!this.turn || (this.turn.state !== 'running' && this.turn.state !== 'awaiting-permission')) {
+      throw fail(ERROR_CODES.no_active_turn, 'No active turn to steer');
+    }
+    if (typeof this.connection.steer !== 'function') {
+      throw fail(
+        ERROR_CODES.capability_unsupported,
+        `${this.spec.backend} does not support steering; use cancel and a follow-up prompt instead`,
+        { capability: 'steer', backend: this.spec.backend },
+      );
+    }
+    const text = String(params?.text ?? '');
+    if (text.trim() === '') throw fail(ERROR_CODES.usage, 'Steer text is empty');
+    const result = await this.connection.steer(text);
+    this.#emit({ kind: 'steered', chars: text.length });
+    this.#saveMeta();
+    return { ok: true, turnId: this.turn.id, nativeTurnId: result?.turnId ?? null };
   }
 
   /**
@@ -447,14 +692,30 @@ export class SessionWorker {
         turn.stopReason = 'relayrook_timeout';
       } else if (stopReason === 'cancelled') {
         turn.state = 'cancelled';
+      } else if (stopReason === 'failed') {
+        turn.state = 'failed';
+        const codexError = result?.error;
+        turn.error = {
+          code: codexError?.codexErrorInfo ?? 'backend_turn_failed',
+          message: codexError?.message ?? 'Backend reported a failed turn',
+        };
       } else if (stopReason === null) {
         turn.state = 'failed';
         turn.error = { code: ERROR_CODES.protocol_error, message: 'Backend returned no stopReason' };
       } else {
         turn.state = 'completed';
       }
-      if (result?.usage) turn.usage = result.usage;
+      if (result?.usage) turn.usage = this.#normalizedUsage(result.usage);
       turn.result = result;
+    }
+
+    // Finalize the usage record: latency and event count are only knowable
+    // once the turn ends. A turn whose provider never reported usage keeps
+    // usage: null rather than a zeroed record.
+    if (turn.usage) {
+      turn.usage.latencyMs = Math.max(0, Date.parse(turn.finishedAt) - Date.parse(turn.startedAt));
+      turn.usage.eventCount = turn.usageEvents;
+      turn.usage.rateLimits = this.connection?.lastRateLimits ?? turn.usage.rateLimits ?? null;
     }
 
     // Resolve any still-pending permission so the agent is not left blocked.
@@ -467,6 +728,8 @@ export class SessionWorker {
       result: {
         turnId,
         state: turn.state,
+        mechanism: turn.mechanism,
+        nativeTurnId: turn.nativeTurnId,
         stopReason: turn.stopReason,
         usage: turn.usage,
         error: turn.error,

@@ -1,35 +1,7 @@
-# Codex host metadata for the RelayRook skill.
-# Optional: hosts that do not read this file use SKILL.md alone.
-name: relayrook
-description: >-
-  Delegate implementation, code review, or security review to another locally
-  installed coding agent through a persistent structured session, with explicit
-  model and effort control and parent-held permissions.
-version: 0.1.0
-license: MIT
+interface:
+  display_name: "RelayRook"
+  short_description: "Delegate work across your installed coding agents"
+  default_prompt: "Use $relayrook to delegate this task to an installed coding agent and verify the result."
 
-entrypoint:
-  command: node
-  args: ["scripts/relayrook.mjs"]
-  cwd: skill
-
-requirements:
-  runtime: node>=22.13.0
-  dependencies: []
-  network: only for `bootstrap`, which installs a pinned adapter package
-
-invoke_when:
-  - The user asks another agent, CLI, or model to do the work
-  - The user wants an independent code review or security review
-  - The user names a specific coding CLI or subscription route
-  - The user wants to continue, correct, or cancel already delegated work
-
-do_not_invoke_when:
-  - The user asks what an agent or protocol is
-  - The request is a small edit the current agent can make directly
-  - The user asked to see the result of a review that already ran
-
-notes: >-
-  Always pass --caller codex from this host. Environment variables such as
-  CODEX_THREAD_ID are inherited by child processes and cannot establish the
-  immediate caller.
+policy:
+  allow_implicit_invocation: true

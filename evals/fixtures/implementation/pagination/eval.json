@@ -1,0 +1,10 @@
+{
+  "id": "impl-pagination",
+  "role": "implementation",
+  "task": "The paginate() function in pager.mjs returns the wrong slice: page 1 skips the first page of items. Fix it so the documented 1-based paging contract holds. Keep pageCount() and the input validation unchanged.",
+  "check": "node check.mjs",
+  "allowedFiles": ["pager.mjs"],
+  "expect": {
+    "filesMayChange": ["pager.mjs"]
+  }
+}

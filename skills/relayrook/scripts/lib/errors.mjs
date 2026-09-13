@@ -31,6 +31,15 @@ export const ERROR_CODES = Object.freeze({
   model_rejected: 'model_rejected',
   bootstrap_failed: 'bootstrap_failed',
   state_error: 'state_error',
+  local_execution_unavailable: 'local_execution_unavailable',
+  node_version_unsupported: 'node_version_unsupported',
+  transport_unavailable: 'transport_unavailable',
+  unsupported_backend_version: 'unsupported_backend_version',
+  adapter_version_mismatch: 'adapter_version_mismatch',
+  session_not_resumable: 'session_not_resumable',
+  capability_unsupported: 'capability_unsupported',
+  role_posture_mismatch: 'role_posture_mismatch',
+  control_unauthorized: 'control_unauthorized',
 });
 
 export class RelayRookError extends Error {

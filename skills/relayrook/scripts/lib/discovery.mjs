@@ -1,9 +1,9 @@
-import { spawn } from 'node:child_process';
 import { accessSync, constants, existsSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 import { allBackends, getBackend } from './backends.mjs';
 import { redactPath, shortHash, writeJsonAtomic } from './util.mjs';
+import { spawnCommand } from './platform.mjs';
 
 /**
  * Deterministic, cheap discovery first (PATH + `--version`), protocol probes
@@ -74,7 +74,7 @@ export function probeVersion(command, args, options = {}) {
     };
     let child;
     try {
-      child = spawn(command, args, { cwd: options.cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+      child = spawnCommand(command, args, { cwd: options.cwd, stdio: ['ignore', 'pipe', 'pipe'] });
     } catch (err) {
       finish({ ok: false, version: null, error: err instanceof Error ? err.message : String(err) });
       return;
@@ -124,7 +124,13 @@ export function resolveClaudeAdapter(stateDir, env = process.env) {
   }
   const onPath = whichSync(backend.command, env);
   if (onPath) return { path: onPath, source: 'path', version: null };
-  const bundled = path.join(stateDir, 'adapters', 'node_modules', '.bin', backend.command);
+  const bundled = path.join(
+    stateDir,
+    'adapters',
+    'node_modules',
+    '.bin',
+    process.platform === 'win32' ? `${backend.command}.cmd` : backend.command,
+  );
   if (existsSync(bundled)) {
     return { path: bundled, source: 'bootstrapped', version: readAdapterVersion(stateDir) };
   }
@@ -220,7 +226,10 @@ export async function discoverBackend(backend, options) {
     record.problems.push(`${backend.command} not found on PATH`);
     return record;
   }
-  const version = await probeVersion(backend.command, backend.versionArgs, { timeoutMs: options.timeoutMs });
+  // Probe the resolved path, not the bare name: on Windows a `.cmd` shim can
+  // only be executed through cmd.exe, and spawnCommand can only tell it needs
+  // that route from a real file extension.
+  const version = await probeVersion(executable, backend.versionArgs, { timeoutMs: options.timeoutMs });
   record.version = version.version;
   if (!version.version && version.error) record.problems.push(`version probe failed: ${version.error}`);
   return record;
