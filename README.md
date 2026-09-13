@@ -92,10 +92,11 @@ npx skills add 1saifj/relayrook --skill relayrook \
   --agent codex claude-code kiro-cli opencode devin
 ```
 
-This repository and its skills.sh page are live. To install RelayRook globally for every host recognized by the installer:
+This repository and its skills.sh page are live. To install RelayRook globally for all five supported hosts:
 
 ```bash
-npx skills add 1saifj/relayrook --skill relayrook --agent '*' --global --yes --copy
+npx skills add 1saifj/relayrook --skill relayrook \
+  --agent codex claude-code kiro-cli opencode devin --global --yes --copy
 ```
 
 You can also copy `skills/relayrook/` anywhere and run its entrypoint directly — the directory is self-contained and needs no checkout:
