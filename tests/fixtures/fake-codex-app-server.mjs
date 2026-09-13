@@ -137,6 +137,16 @@ async function runTurn(turnId, params) {
     return complete('completed');
   }
 
+  if (text.includes('QUOTA_EXHAUSTED')) {
+    // What Codex actually does when the account runs out: an `error`
+    // notification carrying the provider's message, then a bare failed turn.
+    notify('error', {
+      error: { message: "You've hit your usage limit. Visit https://example.invalid/usage to purchase more credits." },
+      willRetry: false,
+    });
+    return complete('failed');
+  }
+
   if (text.includes('FAIL_TURN')) {
     return complete('failed', { error: { message: 'turn failed by fixture', codexErrorInfo: 'turn_failed' } });
   }

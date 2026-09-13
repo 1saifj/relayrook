@@ -51,6 +51,17 @@ the prompt says so.
 - `references/providers.md` documents each backend's lever; `SKILL.md` says
   when to pick each mode and how to decide a single permission request.
 
+### Backend failures explain themselves
+
+A backend can report an error mid-turn and then finish the turn as `failed`
+with nothing attached. Codex out of credits does exactly that: the reply reads
+"Review was interrupted. Please re-run" while the real cause — "You've hit your
+usage limit" — arrived in a separate notification. The provider's message is
+now kept on the turn as `backendError` and promoted into `turn.error` when the
+failure would otherwise be bare, with a category (`quota`, `rate-limit`,
+`auth`, `unknown`) and `retryable` / `reroute` flags, so a host re-routes
+instead of re-running work that cannot succeed.
+
 ### Fixed
 
 - **A command's own `ok` field could overwrite the success envelope.** The CLI

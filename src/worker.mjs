@@ -4,7 +4,7 @@ import path from 'node:path';
 import { AcpConnection } from './adapters/acp.mjs';
 import { CodexAppServerConnection } from './adapters/codex.mjs';
 import { appendTurnAnswer, EventLog, SessionStore, writeTurnRecord, LIMITS, SESSION_SCHEMA_VERSION } from './state.mjs';
-import { fail, ERROR_CODES } from './errors.mjs';
+import { classifyBackendError, fail, ERROR_CODES } from './errors.mjs';
 import { getBackend } from './backends.mjs';
 import { serveControl } from './control.mjs';
 import { normalizeUsage } from './usage.mjs';
@@ -34,6 +34,30 @@ export const DEFAULT_TURN_TIMEOUT_MS = 60 * 60 * 1000;
  * generic connection; the Codex app-server has its own.
  * @param {any} args
  */
+/**
+ * A backend error arrives as whatever shape the provider chose. Pull a human
+ * message out of it without losing the payload.
+ * @param {any} error
+ */
+export function backendErrorMessage(error) {
+  if (error == null) return '';
+  if (typeof error === 'string') {
+    try {
+      const parsed = JSON.parse(error);
+      return backendErrorMessage(parsed) || error;
+    } catch {
+      return error;
+    }
+  }
+  if (typeof error === 'object') {
+    const direct = error.message ?? error.error ?? error.detail ?? null;
+    if (typeof direct === 'string') return backendErrorMessage(direct);
+    if (direct && typeof direct === 'object') return backendErrorMessage(direct);
+    return JSON.stringify(error);
+  }
+  return String(error);
+}
+
 export function createBackendConnection(args) {
   if (args.backend?.kind === 'app-server') return new CodexAppServerConnection(args);
   return new AcpConnection(args);
@@ -165,6 +189,7 @@ export class SessionWorker {
       answerTruncated: turn.answerTruncated,
       awaitingPermission: turn.state === 'awaiting-permission',
       error: turn.error ?? null,
+      backendError: turn.backendError ?? null,
       watchdog: this.#watchdogSummary(turn),
       recordDir: redactPath(this.store.turnDir(turn.id)),
     };
@@ -522,14 +547,33 @@ export class SessionWorker {
         this.#emit({ kind: 'rate_limits', rateLimits: update.rateLimits });
         this.#saveMeta();
         break;
-      case 'server_error':
+      case 'server_error': {
+        const message = backendErrorMessage(update.error);
+        const classified = classifyBackendError(message);
+        // Kept on the turn: a backend that says "you've hit your usage limit"
+        // and then reports a bare `failed` turn would otherwise leave the
+        // caller re-running something that cannot succeed.
+        if (this.turn && !this.turn.finishedAt) {
+          this.turn.backendError = {
+            code: 'server_error',
+            message,
+            category: classified.category,
+            retryable: classified.retryable,
+            reroute: classified.reroute,
+            willRetry: update.willRetry === true,
+          };
+        }
         this.#emit({
           kind: 'error',
           code: 'server_error',
-          message: JSON.stringify(update.error ?? null).slice(0, 500),
+          message: message.slice(0, 500),
+          category: classified.category,
+          retryable: classified.retryable,
+          reroute: classified.reroute,
           willRetry: update.willRetry,
         });
         break;
+      }
       default:
         this.#emit({ kind: 'agent_update', update });
     }
@@ -947,6 +991,14 @@ export class SessionWorker {
     if (!this.turn || this.turn.id !== turnId || this.turn.finishedAt) return;
     this.#clearTurnTimers();
     const turn = this.turn;
+    /** Attach the backend's own explanation to a failure that has none. */
+    const explainFailure = () => {
+      if (turn.state !== 'failed' || !turn.backendError) return;
+      const generic = !turn.error || turn.error.code === 'backend_turn_failed';
+      turn.error = generic
+        ? { ...turn.backendError, code: `backend_${turn.backendError.category.replace('-', '_')}` }
+        : { ...turn.error, backendError: turn.backendError };
+    };
     turn.finishedAt = new Date(this.now()).toISOString();
 
     if (err) {
@@ -978,6 +1030,8 @@ export class SessionWorker {
       if (result?.usage) turn.usage = this.#normalizedUsage(result.usage);
       turn.result = result;
     }
+
+    explainFailure();
 
     // Finalize the usage record: latency and event count are only knowable
     // once the turn ends. A turn whose provider never reported usage keeps

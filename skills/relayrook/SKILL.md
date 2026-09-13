@@ -81,7 +81,10 @@ separately.
    Never send an option the agent did not advertise.
 8. **Report honestly.** Use the turn's `state` and `stopReason`, never a
    process exit code. `complete-no-findings` and `incomplete` are different
-   outcomes.
+   outcomes. A failed turn carries the backend's own explanation in
+   `turn.error` with a `category`: `quota` and `auth` mean re-running will fail
+   again — `route` to another backend or tell the user — while `rate-limit` is
+   worth retrying.
 
 ## Permissions
 

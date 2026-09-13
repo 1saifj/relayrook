@@ -139,6 +139,21 @@ for conditions the backend never reported. `relayrook_timeout` covers both
 watchdogs; read `watchdog.timeoutKind` to tell a silent backend (`stall`) from
 one that simply ran out of wall clock (`deadline`).
 
+## Backend errors
+
+A backend can report an error mid-turn and then finish the turn as `failed`
+with nothing attached — Codex out of credits does exactly that, and a caller
+told only "failed" re-runs work that cannot succeed. RelayRook keeps the
+provider's own message on the turn as `backendError` and, when the failure
+would otherwise be bare, promotes it into `turn.error` with a category:
+
+| Category | `retryable` | `reroute` | Meaning |
+| :--- | :--- | :--- | :--- |
+| `quota` | no | yes | The subscription is exhausted. Route the work to another backend. |
+| `rate-limit` | yes | no | Slow down and retry the same backend. |
+| `auth` | no | yes | The backend is not authenticated; the user must fix it. |
+| `unknown` | yes | no | Unrecognised; the provider's text is preserved verbatim. |
+
 ## Events and cursors
 
 Events are appended with a monotonic `cursor`. Pass the previous response's

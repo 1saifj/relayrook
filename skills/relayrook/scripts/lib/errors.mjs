@@ -105,3 +105,25 @@ export const STOP_REASONS = Object.freeze([
   'relayrook_process_exited',
   'relayrook_protocol_error',
 ]);
+
+/**
+ * Classify a message a backend reported mid-turn, so a delegating agent can
+ * tell "this backend is out of quota, route elsewhere" from "retry this".
+ *
+ * The provider's own words are the evidence; this only labels them.
+ * @param {string|null|undefined} message
+ * @returns {{category: 'quota'|'auth'|'rate-limit'|'unknown', retryable: boolean, reroute: boolean}}
+ */
+export function classifyBackendError(message) {
+  const text = String(message ?? '').toLowerCase();
+  if (/usage limit|out of credits|purchase more credits|quota (?:exceeded|exhausted)|insufficient (?:credits|quota)/.test(text)) {
+    return { category: 'quota', retryable: false, reroute: true };
+  }
+  if (/rate limit|too many requests|429/.test(text)) {
+    return { category: 'rate-limit', retryable: true, reroute: false };
+  }
+  if (/unauthorized|not authenticated|invalid api key|401|403|log ?in again/.test(text)) {
+    return { category: 'auth', retryable: false, reroute: true };
+  }
+  return { category: 'unknown', retryable: true, reroute: false };
+}

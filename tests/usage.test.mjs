@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { normalizeUsage, hasUsageData } from '../src/usage.mjs';
+import { classifyBackendError } from '../src/errors.mjs';
+import { backendErrorMessage } from '../src/worker.mjs';
 
 // Codex thread/tokenUsage/updated payload shape (observed on 0.153.4).
 const CODEX_PAYLOAD = {
@@ -118,4 +120,28 @@ test('missing cache counts never imply all input was uncached', () => {
 
 test('explicit uncached input remains known without a cache count', () => {
   assert.equal(normalizeUsage('claude', { uncached_input_tokens: 12 }).uncachedInputTokens, 12);
+});
+
+test('backend errors are classified so a host knows whether to retry or reroute', () => {
+  const quota = classifyBackendError("You've hit your usage limit. Visit https://example.invalid to purchase more credits.");
+  assert.deepEqual(quota, { category: 'quota', retryable: false, reroute: true });
+
+  assert.equal(classifyBackendError('429 Too Many Requests').category, 'rate-limit');
+  assert.equal(classifyBackendError('429 Too Many Requests').retryable, true);
+  assert.equal(classifyBackendError('Unauthorized: please log in again').category, 'auth');
+  assert.equal(classifyBackendError('Unauthorized: please log in again').reroute, true);
+
+  const unknown = classifyBackendError('connection reset by peer');
+  assert.equal(unknown.category, 'unknown');
+  assert.equal(unknown.retryable, true, 'an unrecognised error is not assumed fatal');
+  assert.equal(classifyBackendError(null).category, 'unknown');
+});
+
+test('a backend error message survives whatever shape the provider chose', () => {
+  assert.equal(backendErrorMessage('plain text'), 'plain text');
+  assert.equal(backendErrorMessage({ message: 'nested' }), 'nested');
+  assert.equal(backendErrorMessage({ error: { message: 'deeper' } }), 'deeper');
+  assert.equal(backendErrorMessage('{"message":"json string"}'), 'json string');
+  assert.equal(backendErrorMessage(null), '');
+  assert.match(backendErrorMessage({ weird: true }), /weird/);
 });

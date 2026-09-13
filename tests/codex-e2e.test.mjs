@@ -262,6 +262,21 @@ test('a failed codex turn reports the protocol failure, not a crash', async () =
   assert.equal(finished.turn.stopReason, 'failed');
 });
 
+test('a quota failure is reported as a quota failure, not a bare failed turn', async () => {
+  // Observed live: Codex out of credits emits an `error` notification with the
+  // provider's message and then completes the turn as `failed` with nothing
+  // attached. A caller told only "failed" re-runs a turn that cannot succeed.
+  await promptSession({ stateDir: ctx.stateDir, key: ctx.key, text: 'QUOTA_EXHAUSTED' });
+  const finished = await waitSession({ stateDir: ctx.stateDir, key: ctx.key, timeoutMs: 20000 });
+  assert.equal(finished.turn.state, 'failed');
+  assert.equal(finished.turn.error.code, 'backend_quota');
+  assert.equal(finished.turn.error.category, 'quota');
+  assert.equal(finished.turn.error.retryable, false);
+  assert.equal(finished.turn.error.reroute, true);
+  assert.match(finished.turn.error.message, /usage limit/i);
+  assert.equal(finished.turn.backendError.category, 'quota');
+});
+
 test('steering with no active turn is a typed error', async () => {
   await assert.rejects(
     steerSession({ stateDir: ctx.stateDir, key: ctx.key, text: 'now' }),
