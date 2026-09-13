@@ -1,0 +1,124 @@
+{
+  "version": 1,
+  "observedDate": "2026-09-13",
+  "evidenceBasis": "configured-preference",
+  "evidenceNote": "Weights are configured preferences derived from docs/research.md, not benchmark results. `verifiedTurn` marks routes that completed a real inference turn on this machine; every other candidate is advertised capability only.",
+  "roles": {
+    "implementation": {
+      "readOnly": false,
+      "candidates": [
+        {
+          "backend": "devin",
+          "model": "swe-2-max",
+          "effort": null,
+          "weight": 100,
+          "verifiedTurn": true,
+          "basis": "Pinned Devin route; prompts, edits, permissions, resume and cancellation exercised live."
+        },
+        {
+          "backend": "opencode",
+          "model": "opencode-go/kimi-k2.7-code",
+          "effort": null,
+          "weight": 70,
+          "verifiedTurn": true,
+          "basis": "Explicit Go model selection and readback plus a completed turn."
+        },
+        {
+          "backend": "kiro",
+          "model": "claude-opus-5",
+          "effort": "max",
+          "weight": 65,
+          "verifiedTurn": true,
+          "basis": "Completed turn with claude-opus-5; max effort confirmed through vendor metadata."
+        },
+        {
+          "backend": "claude",
+          "model": "opus[1m]",
+          "effort": "max",
+          "weight": 60,
+          "verifiedTurn": true,
+          "basis": "Pinned adapter completed a turn with opus[1m] and max effort confirmed."
+        }
+      ]
+    },
+    "code-review": {
+      "readOnly": true,
+      "candidates": [
+        {
+          "backend": "claude",
+          "model": "opus[1m]",
+          "effort": "max",
+          "weight": 80,
+          "verifiedTurn": true,
+          "basis": "Pinned adapter completed a live inference turn with model and effort readback."
+        },
+        {
+          "backend": "kiro",
+          "model": "claude-opus-5",
+          "effort": "max",
+          "weight": 70,
+          "verifiedTurn": true,
+          "basis": "Completed a max-effort RelayRook code review on this machine."
+        },
+        {
+          "backend": "opencode",
+          "model": "opencode-go/kimi-k3",
+          "effort": null,
+          "weight": 55,
+          "verifiedTurn": false,
+          "basis": "Advertised Go route; only kimi-k2.7-code has a completed turn here."
+        },
+        {
+          "backend": "devin",
+          "model": "swe-2-max",
+          "effort": null,
+          "weight": 40,
+          "verifiedTurn": true,
+          "basis": "Usable, but prefer a different family from the implementation route."
+        }
+      ]
+    },
+    "security-review": {
+      "readOnly": true,
+      "candidates": [
+        {
+          "backend": "claude",
+          "model": "opus[1m]",
+          "effort": "max",
+          "weight": 85,
+          "verifiedTurn": false,
+          "basis": "Strong reasoning route with max effort available; not yet evaluated on security fixtures."
+        },
+        {
+          "backend": "kiro",
+          "model": "claude-opus-5",
+          "effort": "max",
+          "weight": 75,
+          "verifiedTurn": true,
+          "basis": "Completed turn on this machine; max effort confirmed through vendor metadata."
+        },
+        {
+          "backend": "opencode",
+          "model": "opencode-go/deepseek-v4-pro",
+          "effort": null,
+          "weight": 45,
+          "verifiedTurn": false,
+          "basis": "Advertised Go route; unevaluated for security review."
+        },
+        {
+          "backend": "devin",
+          "model": "swe-2-max",
+          "effort": null,
+          "weight": 35,
+          "verifiedTurn": true,
+          "basis": "Available fallback; prefer an independent reviewer family."
+        }
+      ]
+    }
+  },
+  "scoring": {
+    "verifiedTurnBonus": 15,
+    "preferredProviderBonus": 10,
+    "independentFamilyBonus": 8
+  }
+}

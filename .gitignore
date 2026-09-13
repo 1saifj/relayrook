@@ -1,0 +1,7 @@
+node_modules/
+*.tsbuildinfo
+.relayrook/
+.DS_Store
+*.log
+coverage/
+tmp/

@@ -1,0 +1,27 @@
+{
+  "status": "held-out fixtures; not yet scored against a host",
+  "purpose": "Skill discovery: does the SKILL.md description fire on delegation requests and stay quiet on explanation or trivial local edits?",
+  "source": "docs/evaluation-plan.json trigger_cases, kept here so the skill can be evaluated from the installed subtree",
+  "cases": [
+    { "prompt": "Use the best installed coding agent to implement the pagination fix.", "should_trigger": true },
+    { "prompt": "Have another model review this diff before I merge it.", "should_trigger": true },
+    { "prompt": "Route a security review of the changed auth module to the strongest available reviewer.", "should_trigger": true },
+    { "prompt": "Use my OpenCode Go subscription for this bounded refactor.", "should_trigger": true },
+    { "prompt": "Let Devin implement this, then have Claude review the result.", "should_trigger": true },
+    { "prompt": "I am in Claude Code. Delegate this implementation to Codex and bring back the diff.", "should_trigger": true },
+    { "prompt": "Find which local agents I can actually use without adding a paid API provider.", "should_trigger": true },
+    { "prompt": "Continue the same external agent session with these test failures.", "should_trigger": true },
+    { "prompt": "Cancel the delegated work, inspect its changes, and send corrected instructions.", "should_trigger": true },
+    { "prompt": "Choose a qualified independent reviewer that has available quota.", "should_trigger": true },
+    { "prompt": "What does ACP stand for?", "should_trigger": false },
+    { "prompt": "Explain how a command-line coding agent works.", "should_trigger": false },
+    { "prompt": "Rename this local variable. Do it yourself without delegating.", "should_trigger": false },
+    { "prompt": "Compare the concept of code review with a security audit.", "should_trigger": false },
+    { "prompt": "Write a paragraph explaining subscriptions.", "should_trigger": false },
+    { "prompt": "Show the result of the review you already completed; do not start another.", "should_trigger": false },
+    { "prompt": "Change the spelling of this comment.", "should_trigger": false },
+    { "prompt": "Install a color theme for my terminal.", "should_trigger": false },
+    { "prompt": "Tell me what the word agent means in this documentation.", "should_trigger": false },
+    { "prompt": "Explain this five-line function inline.", "should_trigger": false }
+  ]
+}

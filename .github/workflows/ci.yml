@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: check (node ${{ matrix.node }} on ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # macOS is where the backends were researched; Linux is added so the
+        # runtime's own behaviour is covered on a second platform. Windows is
+        # not claimed and is not built here.
+        os: [macos-latest, ubuntu-latest]
+        node: ['22.13.0', '24']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Install dev dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Lint and hygiene
+        run: npm run lint
+
+      - name: Verify the packaged skill copy is current
+        run: node scripts/build-skill.mjs --check
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit and end-to-end tests
+        run: npm test
+
+      - name: Doctor smoke test
+        # No backend CLI is installed on the runner; doctor must still succeed
+        # and report every backend as not installed rather than failing.
+        run: node bin/relayrook.js doctor --caller codex --state-dir "${RUNNER_TEMP}/relayrook-state"
+        shell: bash

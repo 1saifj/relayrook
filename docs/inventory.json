@@ -1,0 +1,270 @@
+{
+  "observed_date": "2026-09-13",
+  "scope": "Discovery and protocol checks; not model-quality rankings",
+  "agents": [
+    {
+      "cli": "devin",
+      "version": "3000.10.21",
+      "protocol": "native ACP",
+      "handshake": "passed in prior session tests",
+      "new_session": "passed in prior session tests",
+      "authentication_evidence": "Successful prior live prompts and tool use",
+      "quota": "unknown",
+      "pinned_model": "swe-2-max",
+      "model_readback": "passed",
+      "tested_behaviors": [
+        "persistent process reuse",
+        "multi-turn context recall",
+        "file edit",
+        "shell command with allow_once permission",
+        "stop and resume",
+        "cancel and follow-up recovery"
+      ],
+      "quality_benchmark": false
+    },
+    {
+      "cli": "kiro",
+      "version": "2.21.4",
+      "handshake": "passed",
+      "new_session": "passed",
+      "capabilities": {
+        "loadSession": true,
+        "promptCapabilities": {
+          "image": true,
+          "audio": false,
+          "embeddedContext": false
+        },
+        "mcpCapabilities": {
+          "http": true,
+          "sse": false
+        },
+        "sessionCapabilities": {},
+        "auth": {}
+      },
+      "metadata_style": "models",
+      "current_model": "claude-opus-5",
+      "protocol": "native ACP",
+      "authentication_evidence": "Account status returned; successful model turn",
+      "quota": "unknown",
+      "requested_effort": "max",
+      "effort_readback": "not exposed in observed session response",
+      "prompt_smoke": {
+        "passed": true,
+        "response_text": "ROUTER_READY",
+        "stop_reason": "end_turn",
+        "usage": null,
+        "quality_benchmark": false
+      }
+    },
+    {
+      "cli": "claude",
+      "version": "2.1.263",
+      "protocol": "ACP adapter",
+      "adapter": "@agentclientprotocol/claude-agent-acp",
+      "adapter_version": "0.76.0",
+      "handshake": "passed",
+      "new_session": "passed",
+      "authentication_evidence": "Claude auth status reported logged in with Max subscription",
+      "quota": "unknown",
+      "metadata_style": "configOptions",
+      "current_model": "opus[1m]",
+      "model_options": [
+        {
+          "id": "default",
+          "label": "Default (recommended)"
+        },
+        {
+          "id": "opus[1m]",
+          "label": "Opus 5"
+        },
+        {
+          "id": "claude-fable-5-1[1m]",
+          "label": "Fable 5.1"
+        },
+        {
+          "id": "sonnet",
+          "label": "Sonnet 5"
+        },
+        {
+          "id": "haiku",
+          "label": "Haiku 4.5"
+        }
+      ],
+      "current_effort": "high",
+      "effort_options": [
+        "default",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "observed_permission_mode": "auto",
+      "steering_extension_advertised": true,
+      "steering_tested": false,
+      "prompt_smoke": {
+        "status": "not run"
+      },
+      "quality_benchmark": false
+    },
+    {
+      "cli": "codex",
+      "version": "0.153.4",
+      "protocol": "native app-server",
+      "handshake": "passed",
+      "model_list": "passed",
+      "models": [
+        {
+          "id": "gpt-6-astra",
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+            "ultra"
+          ]
+        },
+        {
+          "id": "gpt-5.6-sol",
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+            "ultra"
+          ]
+        },
+        {
+          "id": "gpt-5.6-terra",
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+            "ultra"
+          ]
+        },
+        {
+          "id": "gpt-5.6-luna",
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
+        },
+        {
+          "id": "gpt-5.5",
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ]
+        },
+        {
+          "id": "gpt-5.3-codex-spark",
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ]
+        }
+      ],
+      "authentication_evidence": "ChatGPT login and successful account/read",
+      "quota": "not queried in this probe",
+      "prompt_smoke": {
+        "status": "not run"
+      },
+      "native_capabilities_inspected": [
+        "turn/steer",
+        "turn/interrupt",
+        "review/start",
+        "model/list"
+      ],
+      "native_steering_tested": false
+    },
+    {
+      "cli": "opencode",
+      "version": "1.18.30",
+      "handshake": "passed",
+      "new_session": "passed",
+      "capabilities": {
+        "loadSession": true,
+        "mcpCapabilities": {
+          "http": true,
+          "sse": true
+        },
+        "promptCapabilities": {
+          "embeddedContext": true,
+          "image": true
+        },
+        "sessionCapabilities": {
+          "close": {},
+          "fork": {},
+          "list": {},
+          "resume": {}
+        }
+      },
+      "metadata_style": "configOptions",
+      "go_model_ids": [
+        "opencode-go/deepseek-v4-flash",
+        "opencode-go/deepseek-v4-flash-vision-exp",
+        "opencode-go/deepseek-v4-pro",
+        "opencode-go/deepseek-v4.1-flash",
+        "opencode-go/glm-5.1",
+        "opencode-go/glm-5.2",
+        "opencode-go/glm-5.3",
+        "opencode-go/glm-5.3-flash",
+        "opencode-go/gpt-5.6-luna",
+        "opencode-go/grok-4.6",
+        "opencode-go/hy3",
+        "opencode-go/hy4-preview",
+        "opencode-go/kimi-k2.6",
+        "opencode-go/kimi-k2.7-code",
+        "opencode-go/kimi-k3",
+        "opencode-go/longcat-2.0",
+        "opencode-go/mimo-v2.5",
+        "opencode-go/mimo-v2.5-pro",
+        "opencode-go/minimax-m2.7",
+        "opencode-go/minimax-m3",
+        "opencode-go/muse-spark-1.2-contributor",
+        "opencode-go/muse-spark-1.3-contributor",
+        "opencode-go/qwen3.6-plus",
+        "opencode-go/qwen3.7-max",
+        "opencode-go/qwen3.7-plus",
+        "opencode-go/qwen3.8-flash",
+        "opencode-go/qwen3.8-max"
+      ],
+      "new_session_default_model": "opencode/big-pickle",
+      "protocol": "native ACP",
+      "authentication_evidence": "Saved OpenCode Go credential; successful Go model turn",
+      "quota": "unknown",
+      "selected_model": "opencode-go/kimi-k2.7-code",
+      "model_selection_readback": "passed",
+      "prompt_smoke": {
+        "passed": true,
+        "response_text": "ROUTER_READY",
+        "stop_reason": "end_turn",
+        "usage": {
+          "inputTokens": 70414,
+          "outputTokens": 5,
+          "totalTokens": 70463,
+          "thoughtTokens": 44
+        },
+        "quality_benchmark": false
+      }
+    }
+  ],
+  "controller_research": {
+    "acpx_package_version": "0.15.1",
+    "source_commit": "ffbefbbb726b1fd4623b8e51708a17d21b10b576",
+    "integration_status": "source reviewed and package installed in scratch; runtime integration not tested"
+  },
+  "project": "RelayRook"
+}

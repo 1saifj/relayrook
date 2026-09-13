@@ -1,0 +1,194 @@
+{
+  "status": "proposed fixtures; not yet executed",
+  "trigger_cases": [
+    {
+      "prompt": "Use the best installed coding agent to implement the pagination fix.",
+      "should_trigger": true
+    },
+    {
+      "prompt": "Have another model review this diff before I merge it.",
+      "should_trigger": true
+    },
+    {
+      "prompt": "Route a security review of the changed auth module to the strongest available reviewer.",
+      "should_trigger": true
+    },
+    {
+      "prompt": "Use my OpenCode Go subscription for this bounded refactor.",
+      "should_trigger": true
+    },
+    {
+      "prompt": "Let Devin implement this, then have Claude review the result.",
+      "should_trigger": true
+    },
+    {
+      "prompt": "I am in Claude Code. Delegate this implementation to Codex and bring back the diff.",
+      "should_trigger": true
+    },
+    {
+      "prompt": "Find which local agents I can actually use without adding a paid API provider.",
+      "should_trigger": true
+    },
+    {
+      "prompt": "Continue the same external agent session with these test failures.",
+      "should_trigger": true
+    },
+    {
+      "prompt": "Cancel the delegated work, inspect its changes, and send corrected instructions.",
+      "should_trigger": true
+    },
+    {
+      "prompt": "Choose a qualified independent reviewer that has available quota.",
+      "should_trigger": true
+    },
+    {
+      "prompt": "What does ACP stand for?",
+      "should_trigger": false
+    },
+    {
+      "prompt": "Explain how a command-line coding agent works.",
+      "should_trigger": false
+    },
+    {
+      "prompt": "Rename this local variable. Do it yourself without delegating.",
+      "should_trigger": false
+    },
+    {
+      "prompt": "Compare the concept of code review with a security audit.",
+      "should_trigger": false
+    },
+    {
+      "prompt": "Write a paragraph explaining subscriptions.",
+      "should_trigger": false
+    },
+    {
+      "prompt": "Show the result of the review you already completed; do not start another.",
+      "should_trigger": false
+    },
+    {
+      "prompt": "Change the spelling of this comment.",
+      "should_trigger": false
+    },
+    {
+      "prompt": "Install a color theme for my terminal.",
+      "should_trigger": false
+    },
+    {
+      "prompt": "Tell me what the word agent means in this documentation.",
+      "should_trigger": false
+    },
+    {
+      "prompt": "Explain this five-line function inline.",
+      "should_trigger": false
+    }
+  ],
+  "transport_cases": [
+    {
+      "id": "missing_cli",
+      "expected": "Reports missing and selects only eligible installed backends"
+    },
+    {
+      "id": "stale_auth",
+      "expected": "Distinguishes credential presence from successful authentication"
+    },
+    {
+      "id": "model_unavailable",
+      "expected": "Reports rejected model; preserves explicit user pin"
+    },
+    {
+      "id": "quota_unknown",
+      "expected": "Reports unknown instead of inventing remaining allowance"
+    },
+    {
+      "id": "quota_exhausted",
+      "expected": "Uses only configured alternatives without changing billing type silently"
+    },
+    {
+      "id": "inherited_host_environment",
+      "expected": "Separates root caller from immediate parent and reports ambiguity"
+    },
+    {
+      "id": "recursive_delegation",
+      "expected": "Enforces depth and ancestry rules before launching more work"
+    },
+    {
+      "id": "legacy_model_metadata",
+      "expected": "Reads Kiro legacy models and configOptions on newer backends"
+    },
+    {
+      "id": "permission_pause",
+      "expected": "Waits for and relays an allowed parent decision; does not auto-approve all"
+    },
+    {
+      "id": "permission_denial",
+      "expected": "Returns a distinct incomplete or denied result"
+    },
+    {
+      "id": "cancel_then_resume",
+      "expected": "Does not duplicate completed edits when resuming"
+    },
+    {
+      "id": "native_steering",
+      "expected": "Uses Codex turn/steer only when advertised and verifies active turn ID"
+    },
+    {
+      "id": "worker_crash",
+      "expected": "Preserves IDs and artifacts without blindly replaying the prompt"
+    },
+    {
+      "id": "large_event",
+      "expected": "Handles payload above 64 KiB and bounds retained output"
+    },
+    {
+      "id": "dirty_workspace",
+      "expected": "Preserves unrelated user modifications"
+    },
+    {
+      "id": "review_scope",
+      "expected": "Does not mutate reviewed source files outside the requested scope"
+    },
+    {
+      "id": "package_install",
+      "expected": "Works with only the installed skill subtree and pinned bootstrap"
+    },
+    {
+      "id": "provider_refusal",
+      "expected": "Reports policy refusal rather than routing around it"
+    }
+  ],
+  "role_evals": {
+    "implementation": {
+      "fixture": "Small repository with a failing pagination edge-case test plus unrelated passing tests",
+      "metrics": [
+        "acceptance test success",
+        "regressions",
+        "patch scope",
+        "time",
+        "token usage",
+        "billed route"
+      ]
+    },
+    "code_review": {
+      "fixture": "Diff containing known correctness defects and realistic clean changes",
+      "metrics": [
+        "true-positive precision",
+        "defect recall",
+        "correct file/line evidence",
+        "false positives",
+        "time"
+      ]
+    },
+    "security_review": {
+      "fixture": "Benign local samples containing authz, injection, and path-handling defects, plus safe lookalikes",
+      "metrics": [
+        "verified findings",
+        "prerequisite accuracy",
+        "false positives",
+        "missed severe defects",
+        "scope compliance",
+        "time"
+      ]
+    }
+  },
+  "evaluation_design": "Keep held-out trigger and code fixtures. Compare skill versus baseline/previous version. Repeat representative cases; record host, backend, model, provider, effort, versions, and environment."
+}

@@ -1,0 +1,50 @@
+{
+  "name": "relayrook",
+  "version": "0.1.0",
+  "description": "Discover locally installed coding-agent CLIs and delegate implementation, code review, or security review through persistent structured sessions.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "bin": {
+    "relayrook": "bin/relayrook.js"
+  },
+  "exports": {
+    ".": "./src/index.mjs"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "skills/",
+    "LICENSE",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "node scripts/build-skill.mjs",
+    "lint": "node scripts/lint.mjs",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node --test \"tests/**/*.test.mjs\"",
+    "check": "npm run lint && npm run typecheck && npm run test",
+    "relayrook": "node bin/relayrook.js"
+  },
+  "keywords": [
+    "acp",
+    "agent-client-protocol",
+    "agent-skill",
+    "coding-agent",
+    "code-review",
+    "security-review",
+    "router"
+  ],
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "22.18.1",
+    "typescript": "5.9.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/1saifj/relayrook.git"
+  },
+  "homepage": "https://github.com/1saifj/relayrook#readme"
+}

@@ -1,0 +1,438 @@
+import path from 'node:path';
+import { readFileSync } from 'node:fs';
+
+import { flagBool, flagList, flagNumber, flagString, parseArgs, requireFlag } from './args.mjs';
+import { fail, ERROR_CODES, toErrorEnvelope } from './errors.mjs';
+import { resolveStateDir } from './state.mjs';
+import { runDoctor, parentProcessInfo } from './doctor.mjs';
+import { route as routeSelect, ROLES } from './routing.mjs';
+import { buildPrompt, parseResultBlock } from './prompts.mjs';
+import { resolveCaller, childRouteEnvelope, routeEnvelopeEnv, DEFAULT_MAX_DEPTH } from './caller.mjs';
+import { discoverAll } from './discovery.mjs';
+import { bootstrapAdapter } from './bootstrap.mjs';
+import { newId, redactPath } from './util.mjs';
+import {
+  answerPermission,
+  cancelSession,
+  listSessions,
+  promptSession,
+  startSession,
+  statusSession,
+  storeFor,
+  stopSession,
+  waitSession,
+} from './sessions.mjs';
+
+export const VERSION = '0.1.0';
+
+const BOOLEAN_FLAGS = [
+  'probe',
+  'json',
+  'reuse',
+  'dry-run',
+  'allow-repeat-backend',
+  'allow-unimplemented',
+  'cancel',
+  'read-only',
+  'help',
+  'quiet',
+  'full',
+  'events',
+];
+
+const USAGE = `relayrook ${VERSION} — route work to locally installed coding agents
+
+Usage: relayrook <command> [options]
+
+Commands
+  doctor                 Report caller evidence, installed backends, adapters and configured routes
+  route                  Choose a backend/model/effort for a role
+  start                  Create or reuse a persistent session for a backend and workspace
+  prompt                 Submit one turn to a session
+  status                 Read session state and incremental events from a cursor
+  wait                   Poll until the active turn reaches a terminal state
+  cancel                 Cancel the active turn
+  permission             Answer a pending permission request with an advertised option
+  stop                   Stop a session worker
+  sessions               List known sessions
+  bootstrap              Install a backend's pinned adapter package
+  prompt-preview         Print the prompt RelayRook would send for a role
+  parse-result           Extract the relayrook-result block from an agent reply
+  version                Print version information
+
+Common options
+  --state-dir <dir>      Override the state directory (default: $RELAYROOK_STATE_DIR or ~/.local/state/relayrook)
+  --caller <id>          Authoritative calling agent id (codex, claude-code, kiro-cli, opencode, devin)
+  --json                 Emit JSON (default; kept for explicitness)
+
+Roles: ${ROLES.join(', ')}
+`;
+
+/**
+ * @param {string[]} argv
+ * @param {{stdout?: NodeJS.WritableStream, stderr?: NodeJS.WritableStream, env?: NodeJS.ProcessEnv}} [io]
+ * @returns {Promise<number>} process exit code
+ */
+export async function main(argv, io = {}) {
+  const stdout = io.stdout ?? process.stdout;
+  const stderr = io.stderr ?? process.stderr;
+  const env = io.env ?? process.env;
+  const { flags, positionals } = parseArgs(argv, { booleans: BOOLEAN_FLAGS });
+  const command = positionals[0];
+
+  if (flagBool(flags, 'help')) {
+    stdout.write(USAGE);
+    return 0;
+  }
+  if (!command) {
+    const envelope = toErrorEnvelope(fail(ERROR_CODES.usage, 'A command is required', { usage: USAGE }));
+    stderr.write(`${JSON.stringify({ ok: false, command: null, error: envelope }, null, 2)}\n`);
+    return 1;
+  }
+
+  try {
+    const result = await dispatch(command, flags, positionals.slice(1), env);
+    stdout.write(`${JSON.stringify({ ok: true, command, ...result }, null, 2)}\n`);
+    return 0;
+  } catch (err) {
+    const envelope = toErrorEnvelope(err);
+    stderr.write(`${JSON.stringify({ ok: false, command, error: envelope }, null, 2)}\n`);
+    return 1;
+  }
+}
+
+/**
+ * @param {string} command
+ * @param {Record<string, any>} flags
+ * @param {string[]} rest
+ * @param {NodeJS.ProcessEnv} env
+ */
+async function dispatch(command, flags, rest, env) {
+  const stateDir = resolveStateDir(flagString(flags, 'state-dir'), env);
+
+  switch (command) {
+    case 'version':
+      return { version: VERSION, node: process.version };
+
+    case 'doctor':
+      return runDoctor({
+        stateDir,
+        explicitCaller: flagString(flags, 'caller') ?? null,
+        probe: flagBool(flags, 'probe'),
+        env,
+        timeoutMs: flagNumber(flags, 'probe-timeout', 8000),
+      });
+
+    case 'route':
+      return commandRoute(flags, stateDir, env);
+
+    case 'start':
+      return commandStart(flags, stateDir, env);
+
+    case 'prompt':
+      return commandPrompt(flags, stateDir, env);
+
+    case 'status': {
+      const key = requireFlag(flags, 'session');
+      const snapshot = await statusSession({
+        stateDir,
+        key,
+        cursor: flagNumber(flags, 'cursor', 0),
+        limit: flagNumber(flags, 'limit', 200),
+        turnId: flagString(flags, 'turn') ?? null,
+      });
+      return {
+        session: key,
+        ...snapshot,
+        meta: compactMeta(snapshot.meta, flagBool(flags, 'full')),
+      };
+    }
+
+    case 'wait': {
+      const key = requireFlag(flags, 'session');
+      const snapshot = await waitSession({
+        stateDir,
+        key,
+        cursor: flagNumber(flags, 'cursor', 0),
+        turnId: flagString(flags, 'turn') ?? null,
+        timeoutMs: flagNumber(flags, 'timeout', 15 * 60 * 1000),
+        pollMs: flagNumber(flags, 'poll', 250),
+      });
+      const answer = snapshot.answer ?? '';
+      const parsedResult = answer ? parseResultBlock(answer) : null;
+      const response = {
+        session: key,
+        ...snapshot,
+        meta: compactMeta(snapshot.meta, flagBool(flags, 'full')),
+        parsedResult,
+      };
+      if (!flagBool(flags, 'events')) {
+        response.eventCount = response.events?.length ?? 0;
+        delete response.events;
+      }
+      if (!flagBool(flags, 'full') && parsedResult?.ok) {
+        response.answerOmitted = true;
+        delete response.answer;
+      }
+      return response;
+    }
+
+    case 'cancel':
+      return cancelSession({
+        stateDir,
+        key: requireFlag(flags, 'session'),
+        turnId: flagString(flags, 'turn'),
+      });
+
+    case 'permission': {
+      const key = requireFlag(flags, 'session');
+      const cancel = flagBool(flags, 'cancel');
+      const optionId = flagString(flags, 'option');
+      if (!cancel && !optionId) {
+        throw fail(ERROR_CODES.usage, 'permission requires --option <id> or --cancel');
+      }
+      const result = await answerPermission({
+        stateDir,
+        key,
+        requestId: flagString(flags, 'request'),
+        optionId,
+        cancel,
+      });
+      return { session: key, ...result };
+    }
+
+    case 'stop':
+      return stopSession({ stateDir, key: requireFlag(flags, 'session') });
+
+    case 'sessions':
+      return { stateDir: redactPath(stateDir), sessions: await listSessions(stateDir) };
+
+    case 'bootstrap':
+      return bootstrapAdapter({
+        backend: requireFlag(flags, 'backend'),
+        stateDir,
+        dryRun: flagBool(flags, 'dry-run'),
+      });
+
+    case 'prompt-preview': {
+      const role = requireFlag(flags, 'role');
+      const workspace = path.resolve(flagString(flags, 'workspace') ?? process.cwd());
+      const prompt = buildPrompt({
+        role,
+        task: requireFlag(flags, 'task'),
+        workspace,
+        scope: flagString(flags, 'scope') ?? null,
+        checks: flagList(flags, 'check'),
+        readOnly: flagBool(flags, 'read-only', role !== 'implementation'),
+        context: flagString(flags, 'context') ?? null,
+      });
+      return { role, workspace: redactPath(workspace), promptChars: prompt.length, prompt };
+    }
+
+    case 'parse-result': {
+      const file = flagString(flags, 'file');
+      const text = file ? readFileSync(path.resolve(file), 'utf8') : (flagString(flags, 'text') ?? rest.join(' '));
+      return parseResultBlock(text);
+    }
+
+    default:
+      throw fail(ERROR_CODES.unknown_command, `Unknown command: ${command}`, {
+        known: [
+          'doctor',
+          'route',
+          'start',
+          'prompt',
+          'status',
+          'wait',
+          'cancel',
+          'permission',
+          'stop',
+          'sessions',
+          'bootstrap',
+          'prompt-preview',
+          'parse-result',
+          'version',
+        ],
+      });
+  }
+}
+
+/** Keep routine status polling small; `--full` preserves discovery payloads. */
+function compactMeta(meta, full) {
+  if (full || !meta || typeof meta !== 'object') return meta;
+  const { availableModels, modes, ...compact } = meta;
+  return {
+    ...compact,
+    availableModelsCount: Array.isArray(availableModels) ? availableModels.length : 0,
+    modesAvailable: modes !== null && modes !== undefined,
+  };
+}
+
+/**
+ * @param {Record<string, any>} flags
+ * @param {NodeJS.ProcessEnv} env
+ */
+async function resolveCallerState(flags, env) {
+  const parent = await parentProcessInfo();
+  return resolveCaller({
+    explicitCaller: flagString(flags, 'caller') ?? null,
+    env,
+    parentProcess: parent,
+  });
+}
+
+/**
+ * @param {Record<string, any>} flags
+ * @param {string} stateDir
+ * @param {NodeJS.ProcessEnv} env
+ */
+async function commandRoute(flags, stateDir, env) {
+  const role = requireFlag(flags, 'role');
+  const callerState = await resolveCallerState(flags, env);
+  const inventory = await discoverAll({ stateDir, env });
+  const allowedProviders = flagList(flags, 'allow-provider');
+  const selection = routeSelect({
+    role,
+    pins: {
+      agent: flagString(flags, 'agent') ?? null,
+      model: flagString(flags, 'model') ?? null,
+      effort: flagString(flags, 'effort') ?? null,
+    },
+    inventory,
+    callerState,
+    policy: {
+      maxDepth: flagNumber(flags, 'max-depth', DEFAULT_MAX_DEPTH),
+      allowRepeatBackend: flagBool(flags, 'allow-repeat-backend'),
+      allowedProviders: allowedProviders.length > 0 ? allowedProviders : null,
+      preferredProviders: flagList(flags, 'prefer-provider'),
+      allowUnimplementedSession: flagBool(flags, 'allow-unimplemented'),
+      avoidBackends: flagList(flags, 'avoid'),
+    },
+  });
+  return { ...selection, caller: callerSummary(callerState) };
+}
+
+/**
+ * @param {Record<string, any>} flags
+ * @param {string} stateDir
+ * @param {NodeJS.ProcessEnv} env
+ */
+async function commandStart(flags, stateDir, env) {
+  const workspace = path.resolve(flagString(flags, 'workspace') ?? process.cwd());
+  const callerState = await resolveCallerState(flags, env);
+  const role = flagString(flags, 'role') ?? null;
+
+  let backend = flagString(flags, 'agent') ?? flagString(flags, 'backend') ?? null;
+  let model = flagString(flags, 'model') ?? null;
+  let effort = flagString(flags, 'effort') ?? null;
+  let selection = null;
+
+  if (!backend) {
+    if (!role) throw fail(ERROR_CODES.usage, 'start requires --backend/--agent or --role');
+    const inventory = await discoverAll({ stateDir, env });
+    selection = routeSelect({
+      role,
+      pins: { agent: null, model, effort },
+      inventory,
+      callerState,
+      policy: {
+        maxDepth: flagNumber(flags, 'max-depth', DEFAULT_MAX_DEPTH),
+        allowRepeatBackend: flagBool(flags, 'allow-repeat-backend'),
+        preferredProviders: flagList(flags, 'prefer-provider'),
+      },
+    });
+    backend = selection.selected.backend;
+    model = selection.selected.model;
+    effort = selection.selected.effort;
+  }
+
+  const routeId = newId();
+  const envelope = childRouteEnvelope({ callerState, backend, routeId });
+  const session = await startSession({
+    stateDir,
+    backend,
+    workspace,
+    model,
+    effort,
+    profile: flagString(flags, 'profile') ?? 'default',
+    caller: callerSummary(callerState),
+    route: { routeId, role, selection: selection?.selected ?? null },
+    env: routeEnvelopeEnv(envelope),
+    reuse: flagBool(flags, 'reuse', true),
+    idleTimeoutMs: flagNumber(flags, 'idle-timeout', 30 * 60 * 1000),
+    startTimeoutMs: flagNumber(flags, 'start-timeout', 120000),
+  });
+
+  return {
+    session: session.key,
+    reused: session.reused,
+    backend,
+    workspace: redactPath(workspace),
+    routeId,
+    delegation: envelope,
+    selection,
+    meta: session.meta,
+  };
+}
+
+/**
+ * @param {Record<string, any>} flags
+ * @param {string} stateDir
+ * @param {NodeJS.ProcessEnv} env
+ */
+async function commandPrompt(flags, stateDir, env) {
+  const key = requireFlag(flags, 'session');
+  const role = flagString(flags, 'role') ?? null;
+  const explicitText = flagString(flags, 'text');
+  const task = flagString(flags, 'task');
+
+  let text;
+  let builtFor = null;
+  if (explicitText) {
+    text = explicitText;
+  } else if (role && task) {
+    const sessionMeta = storeFor(stateDir, key).readMeta();
+    const explicitWorkspace = flagString(flags, 'workspace');
+    const workspace = path.resolve(sessionMeta.workspace);
+    if (explicitWorkspace && path.resolve(explicitWorkspace) !== workspace) {
+      throw fail(ERROR_CODES.usage, '--workspace conflicts with the session workspace', {
+        sessionWorkspace: redactPath(workspace),
+        requestedWorkspace: redactPath(path.resolve(explicitWorkspace)),
+      });
+    }
+    text = buildPrompt({
+      role,
+      task,
+      workspace,
+      scope: flagString(flags, 'scope') ?? null,
+      checks: flagList(flags, 'check'),
+      readOnly: flagBool(flags, 'read-only', role !== 'implementation'),
+      context: flagString(flags, 'context') ?? null,
+    });
+    builtFor = { role, workspace: redactPath(workspace) };
+  } else {
+    throw fail(ERROR_CODES.usage, 'prompt requires --text, or --role with --task');
+  }
+
+  const submitted = await promptSession({
+    stateDir,
+    key,
+    text,
+    timeoutMs: flagNumber(flags, 'timeout', 20 * 60 * 1000),
+    metadata: builtFor,
+  });
+  return { session: key, ...submitted, builtFor, promptChars: text.length };
+}
+
+/** @param {any} callerState */
+function callerSummary(callerState) {
+  return {
+    rootCaller: callerState.rootCaller,
+    immediateParent: callerState.immediateParent,
+    confidence: callerState.confidence,
+    ambiguous: callerState.ambiguous === true,
+    depth: callerState.depth,
+    ancestry: callerState.ancestry,
+    reason: callerState.reason,
+  };
+}
