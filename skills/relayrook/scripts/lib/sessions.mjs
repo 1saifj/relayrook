@@ -400,14 +400,21 @@ export function storeFor(stateDir, key) {
 }
 
 /**
- * @param {{stateDir: string, key: string, text: string, timeoutMs?: number, metadata?: any}} input
+ * @param {{stateDir: string, key: string, text: string, timeoutMs?: number, stallTimeoutMs?: number,
+ *   stallAction?: string, metadata?: any}} input
  */
 export function promptSession(input) {
   const store = storeFor(input.stateDir, input.key);
   return callControl(
     store.socketPath,
     'prompt',
-    { text: input.text, timeoutMs: input.timeoutMs, metadata: input.metadata },
+    {
+      text: input.text,
+      timeoutMs: input.timeoutMs,
+      stallTimeoutMs: input.stallTimeoutMs,
+      stallAction: input.stallAction,
+      metadata: input.metadata,
+    },
     { timeoutMs: 30000, token: controlToken(store) },
   );
 }
@@ -423,14 +430,21 @@ export function steerSession(input) {
 
 /**
  * Start a native review turn (Codex `review/start`).
- * @param {{stateDir: string, key: string, target?: any, delivery?: string, timeoutMs?: number}} input
+ * @param {{stateDir: string, key: string, target?: any, delivery?: string, timeoutMs?: number,
+ *   stallTimeoutMs?: number, stallAction?: string}} input
  */
 export function reviewSession(input) {
   const store = storeFor(input.stateDir, input.key);
   return callControl(
     store.socketPath,
     'review',
-    { target: input.target, delivery: input.delivery, timeoutMs: input.timeoutMs },
+    {
+      target: input.target,
+      delivery: input.delivery,
+      timeoutMs: input.timeoutMs,
+      stallTimeoutMs: input.stallTimeoutMs,
+      stallAction: input.stallAction,
+    },
     { timeoutMs: 30000, token: controlToken(store) },
   );
 }
@@ -479,16 +493,24 @@ export async function statusSession(input) {
  * `failed`) or one RelayRook imposed (`timed-out`). `awaiting-permission` is
  * terminal for the purposes of waiting, because only the parent can unblock it.
  *
- * @param {{stateDir: string, key: string, cursor?: number, timeoutMs?: number, pollMs?: number, turnId?: string|null}} input
+ * A newly reported stall also returns, so the parent hears about a silent
+ * backend instead of blocking on it. The turn is still running: extend, steer
+ * or cancel it, or simply wait again for the next window.
+ *
+ * @param {{stateDir: string, key: string, cursor?: number, timeoutMs?: number, pollMs?: number,
+ *   turnId?: string|null, stopOnStall?: boolean}} input
  */
 export async function waitSession(input) {
   const deadline = Date.now() + (input.timeoutMs ?? 15 * 60 * 1000);
   const pollMs = input.pollMs ?? 250;
+  const stopOnStall = input.stopOnStall !== false;
   let cursor = input.cursor ?? 0;
   /** @type {any[]} */
   const collected = [];
   let cursorGap = false;
   let last = null;
+  /** Stalls already reported before this wait started are not new news. */
+  let stallBaseline = null;
 
   for (;;) {
     const snapshot = await statusSession({ stateDir: input.stateDir, key: input.key, cursor, limit: 500, turnId: input.turnId });
@@ -506,6 +528,11 @@ export async function waitSession(input) {
     if (state === 'awaiting-permission') {
       return { ...snapshot, events: collected, nextCursor: cursor, cursorGap, waitOutcome: 'awaiting-permission' };
     }
+    const stallCount = turn?.watchdog?.stallCount ?? 0;
+    if (stallBaseline === null) stallBaseline = stallCount;
+    if (stopOnStall && state === 'running' && turn?.watchdog?.stalled && stallCount > stallBaseline) {
+      return { ...snapshot, events: collected, nextCursor: cursor, cursorGap, waitOutcome: 'stalled' };
+    }
     if (['completed', 'cancelled', 'failed', 'timed-out'].includes(state)) {
       return { ...snapshot, events: collected, nextCursor: cursor, cursorGap, waitOutcome: 'terminal' };
     }
@@ -517,6 +544,27 @@ export async function waitSession(input) {
     }
     await sleep(pollMs);
   }
+}
+
+/**
+ * Change the active turn's watchdog budget without disturbing the turn.
+ * @param {{stateDir: string, key: string, turnId?: string, timeoutMs?: number,
+ *   stallTimeoutMs?: number, stallAction?: string, resetDeadline?: boolean}} input
+ */
+export function extendSession(input) {
+  const store = storeFor(input.stateDir, input.key);
+  return callControl(
+    store.socketPath,
+    'extend',
+    {
+      turnId: input.turnId,
+      timeoutMs: input.timeoutMs,
+      stallTimeoutMs: input.stallTimeoutMs,
+      stallAction: input.stallAction,
+      resetDeadline: input.resetDeadline,
+    },
+    { timeoutMs: 15000, token: controlToken(store) },
+  );
 }
 
 /** @param {{stateDir: string, key: string, turnId?: string}} input */

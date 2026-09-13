@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased
+
+### Turn watchdogs
+
+A turn is now judged by whether the backend is still producing anything, not by
+how long the work has taken. The old single 20-minute wall-clock timer
+cancelled healthy long-running delegations — a Devin or Kiro implementation
+that was actively streaming at minute 21 was killed and reported as
+`relayrook_timeout`.
+
+- **Inactivity watchdog** (`--stall-timeout`, default 10 minutes). Any
+  backend-originated event restarts the window. A turn paused on a permission
+  request is waiting for the parent, not silent, and is never counted as
+  stalled.
+- **Stalls are reported, not fatal.** The default `--stall-action report` emits
+  `turn_stalled`, keeps the turn running, and returns from `wait` with
+  `waitOutcome: "stalled"` so the parent can steer, extend or cancel with more
+  context than a timer has. `--stall-action cancel` restores kill-on-silence.
+- **Wall clock is a backstop** (`--timeout`, default 60 minutes, `0` disables)
+  for a turn that keeps producing output forever. `turn_timeout` now carries
+  `reason: "stall" | "deadline"` and the turn summary carries `watchdog`
+  (`silentMs`, `stalled`, `stallCount`, `remainingMs`, `deadlineAt`,
+  `timeoutKind`).
+- **`extend`** changes the budget of a turn already in flight, so a reported
+  stall or an approaching deadline no longer forces a re-prompt.
+
 ## 0.2.1
 
 Agent-host discovery uses `doctor --compact`, a stable small schema containing

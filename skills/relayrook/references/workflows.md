@@ -12,11 +12,12 @@ code 1.
 | `preflight` | Capability checks without starting a session | `--backend`, `--caller`, `--state-dir` |
 | `route` | Choose a backend/model/effort for a role | `--role`, `--agent`, `--model`, `--effort`, `--avoid`, `--allow-provider`, `--prefer-provider` |
 | `start` | Create or reuse a persistent session | `--backend`/`--agent` or `--role`, `--workspace`, `--model`, `--effort`, `--profile`, `--resume`, `--sandbox`, `--approval-policy`, `--no-reuse` |
-| `prompt` | Submit one turn | `--session`, `--text` or (`--role` and `--task`), `--scope`, `--check`, `--timeout` |
+| `prompt` | Submit one turn | `--session`, `--text` or (`--role` and `--task`), `--scope`, `--check`, `--stall-timeout`, `--stall-action`, `--timeout` |
 | `steer` | Add input to the in-flight turn (Codex `turn/steer` only) | `--session`, `--text` |
 | `review` | Run a native review turn (Codex `review/start` only) | `--session`, `--target`, `--branch`, `--commit`, `--instructions`, `--delivery` |
 | `status` | Session state plus events from a cursor | `--session`, `--cursor`, `--limit`, `--turn`, `--full` |
-| `wait` | Poll to a terminal turn state | `--session`, `--cursor`, `--timeout`, `--poll`, `--events`, `--full` |
+| `wait` | Poll to a terminal turn state or a reported stall | `--session`, `--cursor`, `--timeout`, `--poll`, `--events`, `--full`, `--through-stall` |
+| `extend` | Give the active turn more watchdog budget | `--session`, `--stall-timeout`, `--stall-action`, `--timeout`, `--reset-deadline` |
 | `cancel` | Cancel the active turn | `--session`, `--turn` |
 | `permission` | Answer a pending permission request | `--session`, `--request`, `--option` or `--cancel` |
 | `stop` | Stop the session worker | `--session` |
@@ -85,6 +86,36 @@ RelayRook moves work; the caller keeps ownership of it.
   file-level diffs, seeded-finding recall — never from the agent's
   self-report.
 
+## Turn watchdogs
+
+A turn is judged by whether the backend is still saying anything, never by how
+long the work has taken. Two independent watchdogs enforce that, and each is
+disabled by passing `0`:
+
+| Watchdog | Flag | Default | Fires when |
+| :--- | :--- | :--- | :--- |
+| Inactivity | `--stall-timeout <ms>` | 600000 (10 min) | The backend produced no event at all for the whole window |
+| Wall clock | `--timeout <ms>` | 3600000 (60 min) | The turn has run that long, however busy it is |
+
+Any backend-originated event — text, thought, tool call, plan, diff, usage or a
+permission request — restarts the inactivity window. A turn paused on a
+permission request is waiting for the parent, not silent, so it is never
+counted as stalled.
+
+A stall is reported, not fatal. `--stall-action report` (the default) emits
+`turn_stalled`, leaves the turn running and returns from `wait` with
+`waitOutcome: "stalled"`, so the parent can steer, extend, cancel, or simply
+wait again for the next window. `--stall-action cancel` restores kill-on-silence
+for a host that cannot poll. Only the wall-clock backstop ends a busy turn on
+its own.
+
+`extend` changes the budget of the turn already in flight: `--timeout` and
+`--stall-timeout` set new values, `--reset-deadline` restarts the wall clock
+from now, and any extend clears a reported stall. Every turn summary carries a
+`watchdog` block — `silentMs`, `stalled`, `stallCount`, `remainingMs`,
+`deadlineAt`, `timeoutKind` — so liveness is readable without inferring it from
+event timestamps.
+
 ## Turn states
 
 | State | Meaning |
@@ -94,7 +125,7 @@ RelayRook moves work; the caller keeps ownership of it.
 | `completed` | The backend returned a terminal `stopReason` other than `cancelled` |
 | `cancelled` | The backend confirmed `stopReason: cancelled` |
 | `failed` | Transport error, protocol error, or a missing `stopReason` |
-| `timed-out` | RelayRook's turn timeout fired and cancellation was requested |
+| `timed-out` | A watchdog fired and cancellation was requested; `watchdog.timeoutKind` is `stall` or `deadline` |
 
 A turn state is never derived from a process exit code. A print-mode agent can
 exit 0 after a denied tool call, so only the protocol's stop reason counts.
@@ -104,7 +135,9 @@ exit 0 after a denied tool call, so only the protocol's stop reason counts.
 Backend reasons pass through unchanged: `end_turn`, `max_tokens`,
 `max_turn_requests`, `refusal`, `cancelled`. RelayRook adds
 `relayrook_timeout`, `relayrook_process_exited` and `relayrook_protocol_error`
-for conditions the backend never reported.
+for conditions the backend never reported. `relayrook_timeout` covers both
+watchdogs; read `watchdog.timeoutKind` to tell a silent backend (`stall`) from
+one that simply ran out of wall clock (`deadline`).
 
 ## Events and cursors
 
@@ -118,8 +151,13 @@ a gap is always visible rather than silently skipped. Per-event text is capped a
 Event kinds: `session_ready`, `session_recovered`, `session_not_resumable`,
 `turn_started`, `steered`, `text`, `thought`, `tool_call`, `tool_call_update`,
 `plan`, `diff`, `usage_update`, `model_rerouted`, `rate_limits`, `permission`,
-`permission_resolved`, `cancel_requested`, `turn_timeout`, `turn_finished`,
-`error`, `session_stopping`, `agent_update`, `agent_notification`.
+`permission_resolved`, `cancel_requested`, `turn_stalled`, `turn_resumed`,
+`turn_extended`, `turn_timeout`, `turn_finished`, `error`, `session_stopping`,
+`agent_update`, `agent_notification`.
+
+`turn_stalled` carries `silentMs`, `stallCount` and the configured `action`;
+`turn_resumed` follows when the backend speaks again; `turn_timeout` carries
+`reason: "stall" | "deadline"`.
 
 `wait` stays compact by default: it returns `eventCount` without replaying raw
 events, and when `parsedResult.ok` is true it omits the duplicate answer text.

@@ -66,7 +66,14 @@ separately.
    with `active_turn`.
 6. **Follow the turn.** `wait` polls to a terminal state; `status --cursor N`
    pages incremental events. Both report a `cursorGap` when retention has
-   dropped events you had not read.
+   dropped events you had not read. A turn is never killed for being long: the
+   inactivity watchdog (`--stall-timeout`, 10 min) only fires when the backend
+   has produced nothing at all, and it reports rather than cancels. `wait` then
+   returns `waitOutcome: "stalled"` with the turn still running — read
+   `turn.watchdog.silentMs`, then steer, `extend`, `cancel`, or wait again. The
+   wall-clock backstop (`--timeout`, 60 min) is the only thing that ends a busy
+   turn; pass `0` to disable either, and raise the backstop for work you expect
+   to run for hours.
 7. **Answer permissions.** When a turn stops with `awaiting-permission`,
    inspect the exact request and its advertised options. Relay a choice when
    the user's task already authorizes that concrete action; ask the user only
@@ -101,6 +108,14 @@ S=$("$SKILL/bin/relayrook" start --role implementation \
   --check "npm test"
 
 "$SKILL/bin/relayrook" wait --session "$S" --timeout 900000
+```
+
+`wait` returning `waitOutcome: "wait-timeout"` or `"stalled"` does not end the
+turn — the work continues. Give a long implementation more room instead of
+re-prompting it:
+
+```bash
+"$SKILL/bin/relayrook" extend --session "$S" --timeout 10800000 --reset-deadline
 ```
 
 ## Backend status

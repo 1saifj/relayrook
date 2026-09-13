@@ -8,6 +8,7 @@
  *   NEED_PERMISSION  request a tool permission, then continue when answered
  *   BIG              emit a text chunk larger than the per-event cap
  *   SLOW             stay running until cancelled or the turn times out
+ *   HEARTBEAT        stream a thought chunk every FAKE_ACP_HEARTBEAT_MS forever
  *   REFUSE           finish with stopReason "refusal"
  *   NO_STOP_REASON   return a result with no stopReason at all
  *
@@ -156,6 +157,24 @@ async function runPrompt(id, params) {
     send({ id, result: { usage: { totalTokens: 1 } } });
     activePrompt = null;
     return;
+  }
+
+  if (text.includes('HEARTBEAT')) {
+    // Busy but long: keeps streaming until cancelled, so an inactivity watchdog
+    // must never fire while a wall-clock one eventually will.
+    const everyMs = Number(process.env.FAKE_ACP_HEARTBEAT_MS ?? 100);
+    const mine = activePrompt;
+    const beat = setInterval(() => {
+      // Identity-checked: a beat from a finished turn must never be mistaken
+      // for progress on the turn that replaced it.
+      if (activePrompt !== mine || mine.cancelled) {
+        clearInterval(beat);
+        return;
+      }
+      update({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'still working' } });
+    }, everyMs);
+    beat.unref?.();
+    return; // resolves only on cancel or timeout
   }
 
   if (text.includes('SLOW')) {

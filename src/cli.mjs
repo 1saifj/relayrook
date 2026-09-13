@@ -12,6 +12,7 @@ import { discoverAll, ProbeCache } from './discovery.mjs';
 import { bootstrapAdapter } from './bootstrap.mjs';
 import { runPreflight } from './preflight.mjs';
 import { newId, redactPath } from './util.mjs';
+import { DEFAULT_TURN_STALL_MS, DEFAULT_TURN_TIMEOUT_MS } from './worker.mjs';
 import { getBackend } from './backends.mjs';
 import {
   answerPermission,
@@ -26,6 +27,7 @@ import {
   storeFor,
   stopSession,
   waitSession,
+  extendSession,
 } from './sessions.mjs';
 
 export const VERSION = '0.2.1';
@@ -45,6 +47,8 @@ const BOOLEAN_FLAGS = [
   'compact',
   'events',
   'detached',
+  'reset-deadline',
+  'through-stall',
 ];
 
 const USAGE = `relayrook ${VERSION} — route work to locally installed coding agents
@@ -61,6 +65,7 @@ Commands
   review                 Run a native review turn (Codex only; other backends: prompt --role code-review)
   status                 Read session state and incremental events from a cursor
   wait                   Poll until the active turn reaches a terminal state
+  extend                 Give the active turn more watchdog budget
   cancel                 Cancel the active turn
   permission             Answer a pending permission request with an advertised option
   stop                   Stop a session worker
@@ -78,6 +83,13 @@ Common options
 
 Discovery options
   --compact              Keep doctor output small for agent-host routing
+
+Turn watchdog options (prompt, review, extend)
+  --stall-timeout <ms>   Inactivity window; a turn is judged silent, never slow (default ${DEFAULT_TURN_STALL_MS}, 0 disables)
+  --stall-action <a>     report | cancel — what a stall does (default report: the turn keeps running and wait returns)
+  --timeout <ms>         Wall-clock backstop for the whole turn (default ${DEFAULT_TURN_TIMEOUT_MS}, 0 disables)
+  --reset-deadline       extend only: restart the wall-clock budget from now
+  --through-stall        wait only: keep waiting through reported stalls
 
 Codex session options
   --sandbox <mode>       read-only | workspace-write | danger-full-access (default follows --profile)
@@ -183,7 +195,9 @@ async function dispatch(command, flags, rest, env) {
         key,
         target,
         delivery: flagBool(flags, 'detached') ? 'detached' : 'inline',
-        timeoutMs: flagNumber(flags, 'timeout', 20 * 60 * 1000),
+        timeoutMs: flagNumber(flags, 'timeout', DEFAULT_TURN_TIMEOUT_MS),
+        stallTimeoutMs: flagNumber(flags, 'stall-timeout', DEFAULT_TURN_STALL_MS),
+        stallAction: stallAction(flags),
       });
       return { session: key, mechanism: 'review/start', ...result };
     }
@@ -213,6 +227,7 @@ async function dispatch(command, flags, rest, env) {
         turnId: flagString(flags, 'turn') ?? null,
         timeoutMs: flagNumber(flags, 'timeout', 15 * 60 * 1000),
         pollMs: flagNumber(flags, 'poll', 250),
+        stopOnStall: !flagBool(flags, 'through-stall'),
       });
       const answer = snapshot.answer ?? '';
       const parsedResult = answer ? parseResultBlock(answer) : null;
@@ -231,6 +246,27 @@ async function dispatch(command, flags, rest, env) {
         delete response.answer;
       }
       return response;
+    }
+
+    case 'extend': {
+      const key = requireFlag(flags, 'session');
+      const timeoutMs = flags.timeout === undefined ? undefined : flagNumber(flags, 'timeout', DEFAULT_TURN_TIMEOUT_MS);
+      const stallTimeoutMs =
+        flags['stall-timeout'] === undefined ? undefined : flagNumber(flags, 'stall-timeout', DEFAULT_TURN_STALL_MS);
+      const action = flags['stall-action'] === undefined ? undefined : stallAction(flags);
+      if (timeoutMs === undefined && stallTimeoutMs === undefined && action === undefined && !flagBool(flags, 'reset-deadline')) {
+        throw fail(ERROR_CODES.usage, 'extend requires --timeout, --stall-timeout, --stall-action or --reset-deadline');
+      }
+      const result = await extendSession({
+        stateDir,
+        key,
+        turnId: flagString(flags, 'turn'),
+        timeoutMs,
+        stallTimeoutMs,
+        stallAction: action,
+        resetDeadline: flagBool(flags, 'reset-deadline'),
+      });
+      return { session: key, ...result };
     }
 
     case 'cancel':
@@ -350,6 +386,20 @@ async function resolveCallerState(flags, env, stateDir) {
  * Build the Codex `review/start` target from CLI flags.
  * @param {Record<string, any>} flags
  */
+/**
+ * What a reported stall should do. `report` keeps the turn alive and lets the
+ * parent decide; `cancel` restores the old kill-on-silence behaviour for hosts
+ * that cannot poll.
+ * @param {Record<string, any>} flags
+ */
+function stallAction(flags) {
+  const value = flagString(flags, 'stall-action') ?? 'report';
+  if (value !== 'report' && value !== 'cancel') {
+    throw fail(ERROR_CODES.usage, `--stall-action must be report or cancel, got ${value}`);
+  }
+  return value;
+}
+
 function reviewTarget(flags) {
   const target = flagString(flags, 'target') ?? 'uncommitted-changes';
   switch (target) {
@@ -548,7 +598,9 @@ async function commandPrompt(flags, stateDir, env) {
     stateDir,
     key,
     text,
-    timeoutMs: flagNumber(flags, 'timeout', 20 * 60 * 1000),
+    timeoutMs: flagNumber(flags, 'timeout', DEFAULT_TURN_TIMEOUT_MS),
+    stallTimeoutMs: flagNumber(flags, 'stall-timeout', DEFAULT_TURN_STALL_MS),
+    stallAction: stallAction(flags),
     metadata: builtFor,
   });
   return { session: key, ...submitted, builtFor, promptChars: text.length };

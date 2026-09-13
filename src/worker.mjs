@@ -8,11 +8,26 @@ import { fail, ERROR_CODES } from './errors.mjs';
 import { getBackend } from './backends.mjs';
 import { serveControl } from './control.mjs';
 import { normalizeUsage } from './usage.mjs';
-import { newId, redactPath, toPositiveInt } from './util.mjs';
+import { newId, redactPath, toNonNegativeInt, toPositiveInt } from './util.mjs';
 import { processIdentity } from './platform.mjs';
 
 export const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
-export const DEFAULT_TURN_TIMEOUT_MS = 20 * 60 * 1000;
+
+/**
+ * Inactivity window for a running turn. This is the watchdog that matters: a
+ * turn is judged by whether the backend is still producing anything, never by
+ * how long the work has taken. An agent that streams thoughts, tool calls or
+ * text for two hours is healthy; one that has emitted nothing for ten minutes
+ * is not. `0` disables it.
+ */
+export const DEFAULT_TURN_STALL_MS = 10 * 60 * 1000;
+
+/**
+ * Wall-clock backstop for a turn that keeps producing output forever. It is
+ * deliberately far larger than the inactivity window, because a busy turn must
+ * never be killed for being long. `0` disables it.
+ */
+export const DEFAULT_TURN_TIMEOUT_MS = 60 * 60 * 1000;
 
 /**
  * Pick the connection implementation for a backend. ACP backends share the
@@ -60,6 +75,10 @@ export class SessionWorker {
     this.pendingPermissions = new Map();
     this.idleTimer = null;
     this.idleTimeoutMs = toPositiveInt(this.spec.idleTimeoutMs, DEFAULT_IDLE_TIMEOUT_MS);
+    /** Wall-clock backstop timer for the active turn. */
+    this.deadlineTimer = null;
+    /** Inactivity timer for the active turn. */
+    this.stallTimer = null;
     this.status = 'starting';
     this.lastError = null;
     this.stopping = false;
@@ -145,7 +164,33 @@ export class SessionWorker {
       answerTruncated: turn.answerTruncated,
       awaitingPermission: turn.state === 'awaiting-permission',
       error: turn.error ?? null,
+      watchdog: this.#watchdogSummary(turn),
       recordDir: redactPath(this.store.turnDir(turn.id)),
+    };
+  }
+
+  /**
+   * What the watchdogs currently know about a turn. `silentMs` is the honest
+   * liveness signal a parent should read: it is time since the backend last
+   * said anything, not time since the turn began.
+   * @param {any} turn
+   */
+  #watchdogSummary(turn) {
+    const wd = turn?.watchdog;
+    if (!wd) return null;
+    const now = this.now();
+    const active = !turn.finishedAt;
+    return {
+      stallTimeoutMs: wd.stallTimeoutMs,
+      deadlineMs: wd.deadlineMs,
+      stallAction: wd.stallAction,
+      stalled: wd.stalled,
+      stallCount: wd.stallCount,
+      timeoutKind: wd.timeoutKind,
+      silentMs: active ? Math.max(0, now - wd.lastActivityAtMs) : null,
+      lastActivityAt: new Date(wd.lastActivityAtMs).toISOString(),
+      deadlineAt: wd.deadlineMs > 0 ? new Date(wd.startedAtMs + wd.deadlineMs).toISOString() : null,
+      remainingMs: wd.deadlineMs > 0 && active ? Math.max(0, wd.startedAtMs + wd.deadlineMs - now) : null,
     };
   }
 
@@ -369,6 +414,7 @@ export class SessionWorker {
   /** @param {any} update */
   #onUpdate(update) {
     if (this.turn?.finishedAt) return;
+    this.#noteActivity();
     const kind = update?.sessionUpdate ?? 'unknown';
     if (kind === 'agent_notification' && update?.method === '_kiro.dev/metadata') {
       const observed = update?.params?.effort ?? null;
@@ -473,6 +519,7 @@ export class SessionWorker {
       settle = resolve;
     });
 
+    this.#noteActivity();
     // Registered before the metadata write, so the very first `status` that
     // observes `awaiting-permission` already lists the request to answer.
     this.pendingPermissions.set(requestId, {
@@ -510,6 +557,168 @@ export class SessionWorker {
     this.#saveMeta();
   }
 
+  /**
+   * (Re)arm both turn watchdogs. Called when a turn starts and whenever its
+   * budget is changed by `extend`.
+   * @param {string} turnId
+   */
+  #armWatchdogs(turnId) {
+    this.#clearTurnTimers();
+    const turn = this.turn;
+    if (!turn || turn.id !== turnId || turn.finishedAt) return;
+    const wd = turn.watchdog;
+    if (wd.deadlineMs > 0) {
+      const remaining = Math.max(1, wd.startedAtMs + wd.deadlineMs - this.now());
+      this.deadlineTimer = setTimeout(() => this.#onDeadline(turnId), remaining);
+      this.deadlineTimer.unref?.();
+    }
+    this.#armStallTimer(turnId);
+  }
+
+  /** @param {string} turnId */
+  #armStallTimer(turnId) {
+    if (this.stallTimer) clearTimeout(this.stallTimer);
+    this.stallTimer = null;
+    const turn = this.turn;
+    if (!turn || turn.id !== turnId || turn.finishedAt) return;
+    const wd = turn.watchdog;
+    if (!wd || wd.stallTimeoutMs <= 0) return;
+    this.stallTimer = setTimeout(() => this.#onStall(turnId), wd.stallTimeoutMs);
+    this.stallTimer.unref?.();
+  }
+
+  #clearTurnTimers() {
+    if (this.deadlineTimer) clearTimeout(this.deadlineTimer);
+    if (this.stallTimer) clearTimeout(this.stallTimer);
+    this.deadlineTimer = null;
+    this.stallTimer = null;
+  }
+
+  /**
+   * Any backend-originated signal — text, thought, tool call, plan, diff, usage
+   * or a permission request — counts as progress and restarts the inactivity
+   * window. A turn that reports a stall and then speaks again is un-stalled.
+   */
+  #noteActivity() {
+    const turn = this.turn;
+    if (!turn || turn.finishedAt || !turn.watchdog) return;
+    const wd = turn.watchdog;
+    const silentMs = Math.max(0, this.now() - wd.lastActivityAtMs);
+    wd.lastActivityAtMs = this.now();
+    if (wd.stalled) {
+      wd.stalled = false;
+      this.#emit({ kind: 'turn_resumed', silentMs, stallCount: wd.stallCount });
+    }
+    this.#armStallTimer(turn.id);
+  }
+
+  /**
+   * The inactivity window elapsed. The default action is to report, not to
+   * kill: the parent is another agent and can steer, extend or cancel with
+   * more context than a timer has.
+   * @param {string} turnId
+   */
+  #onStall(turnId) {
+    const turn = this.turn;
+    if (!turn || turn.id !== turnId || turn.finishedAt) return;
+    const wd = turn.watchdog;
+    // A turn blocked on a permission request is waiting for us, not silent.
+    if (turn.state === 'awaiting-permission') {
+      wd.lastActivityAtMs = this.now();
+      this.#armStallTimer(turnId);
+      return;
+    }
+    const silentMs = Math.max(0, this.now() - wd.lastActivityAtMs);
+    wd.stalled = true;
+    wd.stallCount += 1;
+    this.#emit({
+      kind: 'turn_stalled',
+      silentMs,
+      stallTimeoutMs: wd.stallTimeoutMs,
+      stallCount: wd.stallCount,
+      action: wd.stallAction,
+    });
+    this.#saveMeta();
+    if (wd.stallAction === 'cancel') {
+      this.#timeoutTurn(turnId, 'stall', silentMs);
+      return;
+    }
+    // Report-only: keep the turn alive and report again every window.
+    this.#armStallTimer(turnId);
+  }
+
+  /** @param {string} turnId */
+  #onDeadline(turnId) {
+    const turn = this.turn;
+    if (!turn || turn.id !== turnId || turn.finishedAt) return;
+    this.#timeoutTurn(turnId, 'deadline', Math.max(0, this.now() - turn.watchdog.startedAtMs));
+  }
+
+  /**
+   * @param {string} turnId
+   * @param {'stall'|'deadline'} kind
+   * @param {number} elapsedMs
+   */
+  #timeoutTurn(turnId, kind, elapsedMs) {
+    const turn = this.turn;
+    if (!turn || turn.id !== turnId || turn.finishedAt) return;
+    const wd = turn.watchdog;
+    wd.timeoutKind = kind;
+    this.#emit({
+      kind: 'turn_timeout',
+      reason: kind,
+      timeoutMs: kind === 'stall' ? wd.stallTimeoutMs : wd.deadlineMs,
+      elapsedMs,
+    });
+    this.connection.cancel();
+    for (const [, pending] of this.pendingPermissions) pending.resolve({ cancelled: true });
+    turn.state = 'timed-out';
+    turn.stopReason = 'relayrook_timeout';
+    const message =
+      kind === 'stall'
+        ? `Turn produced no output for ${wd.stallTimeoutMs}ms`
+        : `Turn exceeded its ${wd.deadlineMs}ms wall-clock deadline`;
+    this.#finishTurn(turnId, null, fail(ERROR_CODES.turn_timeout, message, { reason: kind, elapsedMs }));
+  }
+
+  /**
+   * Give the active turn more budget without disturbing it. This is what makes
+   * the watchdog interactive: a reported stall is a question to the parent, and
+   * `extend` is one of the answers.
+   * @param {{turnId?: string, timeoutMs?: number, stallTimeoutMs?: number, stallAction?: string, resetDeadline?: boolean}} params
+   */
+  async extendTurn(params = {}) {
+    const turn = this.turn;
+    if (!turn || (turn.state !== 'running' && turn.state !== 'awaiting-permission')) {
+      throw fail(ERROR_CODES.no_active_turn, 'No active turn to extend');
+    }
+    if (params.turnId && params.turnId !== turn.id) {
+      throw fail(ERROR_CODES.no_active_turn, 'Requested turn is not the active turn', {
+        requested: params.turnId,
+        active: turn.id,
+      });
+    }
+    const wd = turn.watchdog;
+    if (params.timeoutMs !== undefined) wd.deadlineMs = toNonNegativeInt(params.timeoutMs, wd.deadlineMs);
+    if (params.stallTimeoutMs !== undefined) {
+      wd.stallTimeoutMs = toNonNegativeInt(params.stallTimeoutMs, wd.stallTimeoutMs);
+    }
+    if (params.stallAction === 'cancel' || params.stallAction === 'report') wd.stallAction = params.stallAction;
+    if (params.resetDeadline) wd.startedAtMs = this.now();
+    wd.stalled = false;
+    wd.lastActivityAtMs = this.now();
+    this.#emit({
+      kind: 'turn_extended',
+      deadlineMs: wd.deadlineMs,
+      stallTimeoutMs: wd.stallTimeoutMs,
+      stallAction: wd.stallAction,
+      resetDeadline: Boolean(params.resetDeadline),
+    });
+    this.#armWatchdogs(turn.id);
+    this.#saveMeta();
+    return { ok: true, turnId: turn.id, watchdog: this.#watchdogSummary(turn) };
+  }
+
   #resetIdleTimer() {
     if (this.idleTimer) clearTimeout(this.idleTimer);
     if (!Number.isFinite(this.idleTimeoutMs) || this.idleTimeoutMs <= 0) return;
@@ -532,6 +741,7 @@ export class SessionWorker {
       review: async (params) => this.startReview(params),
       status: async (params) => this.readStatus(params),
       cancel: async (params) => this.cancelTurn(params),
+      extend: async (params) => this.extendTurn(params),
       permission: async (params) => this.answerPermission(params),
       stop: async () => {
         setTimeout(() => void this.shutdown('stop-requested'), 10).unref?.();
@@ -545,7 +755,7 @@ export class SessionWorker {
    * refused with a typed error rather than queued, so a caller can never
    * accidentally interleave two mutating prompts against the same workspace.
    * @param {{text?: string, review?: {target: any, delivery: string}, mechanism: string,
-   *   timeoutMs?: number, metadata?: any}} params
+   *   timeoutMs?: number, stallTimeoutMs?: number, stallAction?: string, metadata?: any}} params
    */
   async #startTurn(params) {
     this.#resetIdleTimer();
@@ -560,9 +770,23 @@ export class SessionWorker {
     }
 
     const turnId = newId();
-    const timeoutMs = toPositiveInt(params?.timeoutMs, DEFAULT_TURN_TIMEOUT_MS);
+    const startedAtMs = this.now();
+    // Two independent watchdogs, because "slow" and "hung" are different
+    // failures. The inactivity window judges liveness; the wall-clock deadline
+    // is only a backstop. Either is disabled with 0.
+    const watchdog = {
+      stallTimeoutMs: toNonNegativeInt(params?.stallTimeoutMs, DEFAULT_TURN_STALL_MS),
+      deadlineMs: toNonNegativeInt(params?.timeoutMs, DEFAULT_TURN_TIMEOUT_MS),
+      stallAction: params?.stallAction === 'cancel' ? 'cancel' : 'report',
+      startedAtMs,
+      lastActivityAtMs: startedAtMs,
+      stalled: false,
+      stallCount: 0,
+      timeoutKind: null,
+    };
     this.turn = {
       id: turnId,
+      watchdog,
       state: 'running',
       mechanism: params.mechanism,
       nativeTurnId: null,
@@ -585,16 +809,7 @@ export class SessionWorker {
     this.#emit({ kind: 'turn_started', mechanism: params.mechanism, prompt_chars: params.text?.length ?? 0 });
     this.#saveMeta();
 
-    const timer = setTimeout(() => {
-      if (this.turn?.id !== turnId) return;
-      this.#emit({ kind: 'turn_timeout', timeoutMs });
-      this.connection.cancel();
-      for (const [, pending] of this.pendingPermissions) pending.resolve({ cancelled: true });
-      this.turn.state = 'timed-out';
-      this.turn.stopReason = 'relayrook_timeout';
-      this.#finishTurn(turnId, null, fail(ERROR_CODES.turn_timeout, 'Turn exceeded its timeout'));
-    }, timeoutMs);
-    timer.unref?.();
+    this.#armWatchdogs(turnId);
 
     this.drivePending = true;
     const drive = params.review ? this.connection.review(params.review) : this.connection.prompt(params.text);
@@ -606,20 +821,32 @@ export class SessionWorker {
       )
       .finally(() => {
         this.drivePending = false;
-        clearTimeout(timer);
+        this.#clearTurnTimers();
       });
 
-    return { turnId, state: 'running', startedAt: this.turn.startedAt };
+    return {
+      turnId,
+      state: 'running',
+      startedAt: this.turn.startedAt,
+      watchdog: this.#watchdogSummary(this.turn),
+    };
   }
 
   /**
    * Submit one prompt turn.
-   * @param {{text: string, timeoutMs?: number, metadata?: any}} params
+   * @param {{text: string, timeoutMs?: number, stallTimeoutMs?: number, stallAction?: string, metadata?: any}} params
    */
   async submitPrompt(params) {
     const text = String(params?.text ?? '');
     if (text.trim() === '') throw fail(ERROR_CODES.usage, 'Prompt text is empty');
-    return this.#startTurn({ text, mechanism: 'prompt', timeoutMs: params?.timeoutMs, metadata: params?.metadata });
+    return this.#startTurn({
+      text,
+      mechanism: 'prompt',
+      timeoutMs: params?.timeoutMs,
+      stallTimeoutMs: params?.stallTimeoutMs,
+      stallAction: params?.stallAction,
+      metadata: params?.metadata,
+    });
   }
 
   /**
@@ -627,7 +854,7 @@ export class SessionWorker {
    * report a typed unsupported error; the generic path is `prompt` with the
    * code-review role, which is what `relayrook prompt --role code-review`
    * already does.
-   * @param {{target?: any, delivery?: string, timeoutMs?: number}} params
+   * @param {{target?: any, delivery?: string, timeoutMs?: number, stallTimeoutMs?: number, stallAction?: string}} params
    */
   async startReview(params) {
     if (typeof this.connection.review !== 'function') {
@@ -648,6 +875,8 @@ export class SessionWorker {
       review: { target: params?.target ?? { type: 'uncommittedChanges' }, delivery: params?.delivery ?? 'inline' },
       mechanism: 'review/start',
       timeoutMs: params?.timeoutMs,
+      stallTimeoutMs: params?.stallTimeoutMs,
+      stallAction: params?.stallAction,
     });
   }
 
@@ -683,6 +912,7 @@ export class SessionWorker {
    */
   #finishTurn(turnId, result, err) {
     if (!this.turn || this.turn.id !== turnId || this.turn.finishedAt) return;
+    this.#clearTurnTimers();
     const turn = this.turn;
     turn.finishedAt = new Date(this.now()).toISOString();
 
@@ -831,6 +1061,7 @@ export class SessionWorker {
     for (const [, pending] of this.pendingPermissions) pending.resolve({ cancelled: true });
     this.pendingPermissions.clear();
     if (this.idleTimer) clearTimeout(this.idleTimer);
+    this.#clearTurnTimers();
     try {
       await this.connection?.close();
     } catch {
