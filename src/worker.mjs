@@ -6,6 +6,7 @@ import { CodexAppServerConnection } from './adapters/codex.mjs';
 import { appendTurnAnswer, EventLog, SessionStore, writeTurnRecord, LIMITS, SESSION_SCHEMA_VERSION } from './state.mjs';
 import { classifyBackendError, fail, ERROR_CODES } from './errors.mjs';
 import { getBackend } from './backends.mjs';
+import { classifyPermissionRequest } from './permissions.mjs';
 import { serveControl } from './control.mjs';
 import { normalizeUsage } from './usage.mjs';
 import { newId, redactPath, toNonNegativeInt, toPositiveInt } from './util.mjs';
@@ -155,6 +156,7 @@ export class SessionWorker {
       toolCallId: p.request.toolCall?.toolCallId ?? null,
       title: p.request.toolCall?.title ?? null,
       options: p.request.options,
+      classification: p.request.classification ?? null,
     }));
     this.store.writeMeta(this.meta);
   }
@@ -587,7 +589,10 @@ export class SessionWorker {
   #onPermissionRequest(request) {
     if (this.stopping || this.turn?.finishedAt) return Promise.resolve({ cancelled: true });
     const requestId = request?.requestId ?? request?.toolCall?.toolCallId ?? newId();
-    const normalised = { ...request, requestId };
+    // Classified once, on arrival: the parent answering this request should not
+    // have to re-derive whether it stays inside the workspace.
+    const classification = classifyPermissionRequest(request, { workspace: this.spec.workspace });
+    const normalised = { ...request, requestId, classification };
     if (this.turn) this.turn.state = 'awaiting-permission';
 
     /** @type {(decision: any) => void} */
@@ -622,6 +627,7 @@ export class SessionWorker {
       requestId,
       toolCall: request?.toolCall ?? null,
       options: request?.options ?? [],
+      classification,
     });
     this.#saveMeta();
     return decided;

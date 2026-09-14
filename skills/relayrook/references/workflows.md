@@ -89,6 +89,27 @@ RelayRook moves work; the caller keeps ownership of it.
   file-level diffs, seeded-finding recall — never from the agent's
   self-report.
 
+## Permission request classification
+
+Every pending permission carries a `classification` alongside the agent's own
+options, so a parent decides on evidence instead of on a title:
+
+| Field | Meaning |
+| :--- | :--- |
+| `action` | `read`, `edit`, `execute`, `network` or `other` |
+| `command` | The shell command, read from `rawInput.command`, vendor `_meta` (Devin leaves `title` null and writes it there), content blocks or the title |
+| `paths` | Paths named by the request, from `locations`, `rawInput` and the command text |
+| `outsideWorkspace` | An absolute path outside the session workspace is involved; `/tmp` and `/private/tmp` are the same directory |
+| `destructive` | `rm -rf`, `git push`, `git reset --hard`, `sudo`, `npm publish` and similar |
+| `network` | The action leaves this machine |
+| `touchesSecrets` | The target looks like a credential (`.env`, `~/.ssh`, `credentials`) |
+| `recommendation` | `allow` only when none of the above fired and the request named something judgeable; otherwise `ask-user`, with `reasons` |
+
+The recommendation is deliberately timid and never names an option: relay only
+options the agent advertised, and treat `allow` as "nothing suspicious was
+found", not as consent. `evals/run.mjs --auto-answer` uses exactly this
+classification to run unattended in a disposable fixture workspace.
+
 ## Turn watchdogs
 
 A turn is judged by whether the backend is still saying anything, never by how

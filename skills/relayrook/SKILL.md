@@ -111,6 +111,13 @@ agent denied its edit tool will try the shell, so a `bash` request that writes
 a file in a review is the read-only boundary reaching you, and rejecting it is
 how the session stays read-only.
 
+Every pending request arrives with a `classification` — `action`, the
+`command` (found wherever the backend put it), `paths`, `outsideWorkspace`,
+`destructive`, `network`, `touchesSecrets`, and a timid `recommendation` of
+`allow` or `ask-user` with `reasons`. Read it as evidence, not as an answer:
+`allow` means nothing in the request left the workspace or looked dangerous,
+and the decision is still yours.
+
 Deciding one request (step 7) is a narrower question than choosing a mode:
 
 - **Allow** when the action is inside the workspace, inside the task you

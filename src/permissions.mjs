@@ -1,3 +1,4 @@
+import { realpathSync } from 'node:fs';
 import path from 'node:path';
 
 import { fail, ERROR_CODES } from './errors.mjs';
@@ -255,4 +256,176 @@ export function resolvePermissionPosture(input) {
  */
 export function isUngated(mode) {
   return UNGATED.has(mode);
+}
+
+/** Commands whose blast radius is larger than the task that asked for them. */
+const DESTRUCTIVE_PATTERNS = [
+  /\brm\s+(-[a-z]*\s+)*-[a-z]*[rf]/i,
+  /\bgit\s+(push|reset\s+--hard|clean\s+-[a-z]*f|checkout\s+--\s+\.)/i,
+  /\bsudo\b/i,
+  /\bchmod\s+(-R\s+)?777\b/i,
+  /\b(mkfs|dd\s+if=|shutdown|reboot|killall)\b/i,
+  /\bnpm\s+(publish|unpublish)\b/i,
+  /\bdocker\s+(rm|rmi|system\s+prune)\b/i,
+  /\bdrop\s+(table|database)\b/i,
+  />\s*\/(?:etc|usr|bin|dev)\b/i,
+];
+
+/** Commands that leave the machine. */
+const NETWORK_PATTERNS = [
+  // Anchored as a command, so `~/.ssh/id_rsa` is a credential path rather than
+  // a network call.
+  /(?:^|[\s|;&(])(curl|wget|nc|ssh|scp|rsync)\s/i,
+  /\bgit\s+(clone|fetch|pull|push|remote\s+add)\b/i,
+  /\b(npm|pnpm|yarn|pip|pip3|cargo|go|brew|apt|apt-get)\s+(i\b|install|add|get|publish|update|upgrade)/i,
+];
+
+/** Where a credential usually lives. */
+const SECRET_PATTERNS = [
+  /\.env\b/i,
+  /\bid_rsa\b/i,
+  /\.ssh\//i,
+  /\bcredentials?\b/i,
+  /\.netrc\b/i,
+  /\bsecrets?\.(json|ya?ml|toml)\b/i,
+];
+
+/**
+ * Pull plausible filesystem paths out of a rendered command or title. This is
+ * evidence for a decision, not a parser: anything it misses falls into the
+ * conservative branch below.
+ * @param {string} text
+ */
+function extractPaths(text) {
+  const matches = text.match(/(?:^|[\s'"=(])((?:~|\.{1,2})?\/[^\s'";:|&)]+|[\w.-]+\/[^\s'";:|&)]+)/g) ?? [];
+  return [...new Set(matches.map((m) => m.replace(/^[\s'"=(]+/, '').replace(/[.,;:]+$/, '')))].slice(0, 20);
+}
+
+/** @param {any[]} candidates */
+function firstString(candidates) {
+  for (const value of candidates) {
+    if (typeof value === 'string' && value.trim() !== '') return value;
+  }
+  return '';
+}
+
+/**
+ * Text carried inside an ACP tool call's content blocks — where several agents
+ * put the shell command they are asking about.
+ * @param {any} content
+ */
+function contentTexts(content) {
+  if (!Array.isArray(content)) return [];
+  /** @type {string[]} */
+  const out = [];
+  for (const block of content) {
+    const inner = block?.content ?? block;
+    if (typeof inner?.text === 'string') out.push(inner.text);
+    if (typeof inner?.resource?.text === 'string') out.push(inner.resource.text);
+  }
+  return out;
+}
+
+/**
+ * Prefixes that count as "inside the workspace". macOS resolves `/tmp` to
+ * `/private/tmp`, and agents report the resolved path, so a naive prefix test
+ * calls every request in a temp workspace an escape.
+ * @param {string|null|undefined} workspace
+ */
+function workspacePrefixes(workspace) {
+  if (!workspace) return [];
+  const base = String(workspace).replace(/\/+$/, '');
+  const variants = new Set([base]);
+  try {
+    variants.add(realpathSync(base));
+  } catch {
+    // The workspace may not exist yet; the literal path is still a prefix.
+  }
+  for (const variant of [...variants]) {
+    if (variant.startsWith('/private/')) variants.add(variant.slice('/private'.length));
+    else variants.add(`/private${variant}`);
+  }
+  return [...variants];
+}
+
+/**
+ * Describe one permission request so the parent decides on evidence rather
+ * than on a title.
+ *
+ * Backends disagree on where the action is written down: OpenCode and Kiro put
+ * the command in `title`, Devin leaves `title` null and carries it in
+ * `_meta["cognition.ai/editableCommand"]`, and option names sometimes name it
+ * too. All of that is read as evidence.
+ *
+ * The recommendation is deliberately timid: `allow` only for work that stays
+ * inside the workspace and carries no destructive, networked or credential
+ * signal. Everything else is `ask-user`, including anything this function did
+ * not understand. It never recommends an option the agent did not advertise.
+ *
+ * @param {{requestId?: string, toolCall?: any, options?: any[]}} request
+ * @param {{workspace?: string|null}} [context]
+ */
+export function classifyPermissionRequest(request, context = {}) {
+  const toolCall = request?.toolCall ?? {};
+  const meta = toolCall._meta ?? {};
+  const title = String(toolCall.title ?? '');
+  const command = firstString([
+    toolCall.rawInput?.command,
+    meta['cognition.ai/editableCommand'],
+    ...contentTexts(toolCall.content),
+  ]);
+  const declaredPaths = [
+    ...(Array.isArray(toolCall.locations) ? toolCall.locations.map((location) => location?.path) : []),
+    toolCall.rawInput?.file_path,
+    toolCall.rawInput?.path,
+    toolCall.rawInput?.abs_path,
+  ].filter((value) => typeof value === 'string' && value !== '');
+  const optionText = (request?.options ?? []).map((option) => String(option?.name ?? '')).join(' ');
+
+  const kindRaw = String(toolCall.kind ?? '').toLowerCase();
+  const action =
+    kindRaw === 'edit' || /\b(edit|write|create|patch|apply)\b/i.test(title)
+      ? 'edit'
+      : kindRaw === 'execute' || command !== '' || /\b(run|execute|bash|shell|command)\b/i.test(title)
+        ? 'execute'
+        : kindRaw === 'read' || /\b(read|open|cat|view)\b/i.test(title)
+          ? 'read'
+          : kindRaw === 'fetch' || /\b(fetch|http|url)\b/i.test(title)
+            ? 'network'
+            : 'other';
+
+  // Option names describe the action but are not paths: an agent's phrasing
+  // must never widen what counts as "inside the workspace".
+  const commandEvidence = `${title} ${command} ${JSON.stringify(toolCall.rawInput ?? '')} ${optionText}`;
+  const paths = [...new Set([...declaredPaths, ...extractPaths(`${command} ${title} ${declaredPaths.join(' ')}`)])];
+  const prefixes = workspacePrefixes(context.workspace);
+  const outsideWorkspace = paths.some((candidate) => {
+    if (!candidate.startsWith('/')) return false;
+    if (prefixes.length === 0) return true;
+    return !prefixes.some((prefix) => candidate === prefix || candidate.startsWith(`${prefix}/`));
+  });
+  const destructive = DESTRUCTIVE_PATTERNS.some((re) => re.test(commandEvidence));
+  const network = action === 'network' || NETWORK_PATTERNS.some((re) => re.test(commandEvidence));
+  const touchesSecrets = SECRET_PATTERNS.some((re) => re.test(commandEvidence));
+  const identified = command !== '' || declaredPaths.length > 0 || title !== '';
+
+  /** @type {string[]} */
+  const reasons = [];
+  if (destructive) reasons.push('the command is destructive or irreversible');
+  if (network) reasons.push('the action leaves this machine');
+  if (touchesSecrets) reasons.push('the target looks like a credential');
+  if (outsideWorkspace) reasons.push('a path outside the workspace is involved');
+  if (!identified) reasons.push('the request names no command, file or title to judge');
+
+  return {
+    action,
+    command: command || null,
+    paths,
+    outsideWorkspace,
+    destructive,
+    network,
+    touchesSecrets,
+    recommendation: reasons.length === 0 ? 'allow' : 'ask-user',
+    reasons,
+  };
 }

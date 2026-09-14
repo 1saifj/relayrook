@@ -51,6 +51,23 @@ the prompt says so.
 - `references/providers.md` documents each backend's lever; `SKILL.md` says
   when to pick each mode and how to decide a single permission request.
 
+### Permission requests arrive classified
+
+A pending permission now carries a `classification`: the action, the command
+(read from wherever the backend put it — Devin leaves `title` null and writes
+it into vendor `_meta`), the paths involved, and whether anything leaves the
+workspace, destroys data, reaches the network or touches a credential, with a
+timid `allow` / `ask-user` recommendation and its reasons. `/tmp` and
+`/private/tmp` are treated as the same directory, so a macOS temp workspace is
+not read as an escape, and an agent's own option names can never widen what
+counts as inside the workspace.
+
+`evals/run.mjs` gained `--permission-mode` and `--auto-answer`, which uses that
+classification to run unattended in a disposable fixture workspace and records
+every decision on the run. Before this, an implementation eval could not
+complete without a person answering each request: the Devin pagination fixture
+now passes end to end with `check: pass` and only the fixture file changed.
+
 ### Backend failures explain themselves
 
 A backend can report an error mid-turn and then finish the turn as `failed`

@@ -25,6 +25,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { classifyPermissionRequest } from '../src/permissions.mjs';
+
 import { hasBackend } from '../src/backends.mjs';
 import { resolveStateDir } from '../src/state.mjs';
 
@@ -38,6 +40,7 @@ function parseArgs(argv) {
   const flags = {
     backend: null, role: null, fixture: null, caller: 'eval-runner',
     timeout: 600000, runs: 1, writeEvidence: false, json: false, stateDir: null,
+    permissionMode: null, autoAnswer: false,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -51,8 +54,11 @@ function parseArgs(argv) {
     else if (arg === '--write-evidence') flags.writeEvidence = true;
     else if (arg === '--json') flags.json = true;
     else if (arg === '--state-dir') flags.stateDir = next();
+    else if (arg === '--permission-mode') flags.permissionMode = next();
+    else if (arg === '--auto-answer') flags.autoAnswer = true;
     else if (arg === '--help') {
-      console.log('node evals/run.mjs [--backend a,b] [--role r] [--fixture f] [--runs N] [--write-evidence] [--json]');
+      console.log('node evals/run.mjs [--backend a,b] [--role r] [--fixture f] [--runs N] ' +
+        '[--permission-mode read-only|gated|auto-edits] [--auto-answer] [--write-evidence] [--json]');
       process.exit(0);
     } else {
       console.error(`unknown flag: ${arg}`);
@@ -112,9 +118,50 @@ export function changedFiles(before, after) {
     .filter((file) => before.get(file) !== after.get(file)).sort();
 }
 
-export function sessionStartArgs(backend, workspace, role, caller, stateDir) {
-  return ['start', '--backend', backend, '--workspace', workspace,
+export function sessionStartArgs(backend, workspace, role, caller, stateDir, permissionMode = null) {
+  const args = ['start', '--backend', backend, '--workspace', workspace,
     '--role', role, '--caller', caller, '--state-dir', stateDir];
+  // Declared up front rather than answered ad hoc: a fixture runs in a
+  // disposable temp workspace, which is the case `auto-edits` exists for. The
+  // posture is recorded with the run, because a measured result means nothing
+  // without knowing what the agent was allowed to do.
+  if (permissionMode) args.push('--permission-mode', permissionMode);
+  return args;
+}
+
+/**
+ * Answer the pending requests whose classification says they stay inside the
+ * fixture workspace. Anything else is left pending on purpose.
+ * @param {{pending: any[], session: string, stateDir: string, workspace: string, decisions: any[]}} input
+ * @returns {Promise<number>} how many requests were answered
+ */
+async function answerClassifiedRequests(input) {
+  let answered = 0;
+  for (const request of input.pending) {
+    const classification =
+      request.classification ?? classifyPermissionRequest({ toolCall: { title: request.title } }, { workspace: input.workspace });
+    const allowOption = (request.options ?? []).find((option) => option.kind === 'allow_once')?.optionId;
+    const decision = {
+      requestId: request.requestId,
+      title: request.title,
+      recommendation: classification.recommendation,
+      reasons: classification.reasons,
+      answered: false,
+    };
+    if (classification.recommendation !== 'allow' || !allowOption) {
+      input.decisions.push(decision);
+      continue;
+    }
+    const result = await cli([
+      'permission', '--session', input.session, '--request', request.requestId,
+      '--option', allowOption, '--state-dir', input.stateDir,
+    ]);
+    decision.answered = result.parsed?.ok === true;
+    decision.option = allowOption;
+    input.decisions.push(decision);
+    if (decision.answered) answered += 1;
+  }
+  return answered;
 }
 
 function listFixtures(flags) {
@@ -124,10 +171,14 @@ function listFixtures(flags) {
     const roleDir = path.join(FIXTURES, role);
     if (!existsSync(roleDir)) continue;
     for (const id of readdirSync(roleDir)) {
-      if (flags.fixture && !flags.fixture.includes(id)) continue;
       const dir = path.join(roleDir, id);
       const spec = path.join(dir, 'eval.json');
-      if (existsSync(spec)) out.push({ role, id, dir, spec: JSON.parse(readFileSync(spec, 'utf8')) });
+      if (!existsSync(spec)) continue;
+      const parsed = JSON.parse(readFileSync(spec, 'utf8'));
+      // `--fixture` accepts either the directory name or the id the spec
+      // declares, because both appear in this file's own usage examples.
+      if (flags.fixture && !flags.fixture.includes(id) && !flags.fixture.includes(parsed.id)) continue;
+      out.push({ role, id, dir, spec: parsed });
     }
   }
   return out;
@@ -178,6 +229,10 @@ async function runFixture(fixture, backend, flags, runIndex) {
     runIndex,
     status: 'fail',
     reason: null,
+    permissionMode: flags.permissionMode ?? 'default',
+    permissions: null,
+    /** @type {any[]} */
+    permissionDecisions: [],
     model: null,
     effort: null,
     latencyMs: null,
@@ -214,7 +269,7 @@ async function runFixture(fixture, backend, flags, runIndex) {
     record.effort = routed.parsed.selected?.effort ?? null;
 
     // 3. Start a session against the fixture copy.
-    const startArgs = sessionStartArgs(backend, workspace, fixture.role, flags.caller, stateDir);
+    const startArgs = sessionStartArgs(backend, workspace, fixture.role, flags.caller, stateDir, flags.permissionMode);
     if (record.model) startArgs.push('--model', record.model);
     if (record.effort) startArgs.push('--effort', record.effort);
     const started = await cli(startArgs, { timeout: 180000 });
@@ -224,6 +279,8 @@ async function runFixture(fixture, backend, flags, runIndex) {
       return record;
     }
     const session = started.parsed.session;
+    // What the backend was actually allowed to do, as the session reported it.
+    record.permissions = started.parsed.meta?.permissions ?? null;
 
     // 4. Prompt and wait.
     const task = `${fixture.spec.task}\n\nWorkspace: ${workspace}`;
@@ -240,6 +297,11 @@ async function runFixture(fixture, backend, flags, runIndex) {
     // Permissions remain available for an external supervisor to inspect and
     // answer. Never blanket-approve evaluator tool requests or stop the
     // session merely because it is waiting for an authorized decision.
+    //
+    // `--auto-answer` is the one exception, and it is not a blanket approval:
+    // each request is classified and only the ones that stay inside the
+    // fixture's disposable workspace, with no destructive, networked or
+    // credential signal, are allowed. Every decision is recorded on the run.
     do {
       const remaining = Math.max(0, flags.timeout - (Date.now() - t0));
       waited = await cli([
@@ -248,6 +310,17 @@ async function runFixture(fixture, backend, flags, runIndex) {
       ], { timeout: remaining + 60000 });
       if ((waited.parsed?.state ?? waited.parsed?.turn?.state) !== 'awaiting-permission') break;
       if (Date.now() - t0 >= flags.timeout) break;
+      if (flags.autoAnswer) {
+        const answered = await answerClassifiedRequests({
+          pending: waited.parsed?.pendingPermissions ?? [],
+          session,
+          stateDir,
+          workspace,
+          decisions: record.permissionDecisions,
+        });
+        if (answered === 0) break; // Nothing safe to answer; leave it for a person.
+        continue;
+      }
       await new Promise((resolve) => setTimeout(resolve, 1000));
     } while (Date.now() - t0 < flags.timeout);
     record.latencyMs = Date.now() - t0;
