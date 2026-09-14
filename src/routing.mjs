@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fail, ERROR_CODES } from './errors.mjs';
 import { getBackend, hasBackend } from './backends.mjs';
 import { assertNoRecursion, DEFAULT_MAX_DEPTH } from './caller.mjs';
+import { defaultPermissionMode } from './permissions.mjs';
 import { RelayRookError } from './errors.mjs';
 
 export const ROLES = Object.freeze(['implementation', 'code-review', 'security-review']);
@@ -42,11 +43,53 @@ export function loadRouteEvidence(stateDir) {
 }
 
 /**
- * Evidence key for one route candidate: role + backend + model + effort.
+ * Evidence key for one route candidate: role + backend + model + effort, plus
+ * the permission posture it was measured under.
+ *
+ * Posture belongs in the key because a run that could edit without asking is
+ * not comparable with one that stopped at every write. Routing asks for the
+ * posture a normal delegation of that role would get; evidence gathered under
+ * anything wider is simply not found, which is the intended outcome.
+ * @param {string} role @param {string} backend @param {string|null} model @param {string|null} effort
+ * @param {string} [posture]
+ */
+export function routeEvidenceKey(role, backend, model, effort, posture = defaultPermissionMode({ role })) {
+  return [role, backend, model ?? '', effort ?? '', posture].join('|');
+}
+
+/** The posture prefix a key carries, without its enforcement suffix. */
+function keyPosture(key) {
+  const posture = key.split('|')[4] ?? '';
+  return posture.split('/')[0];
+}
+
+/**
+ * Look up measured evidence for a candidate, accepting evidence written before
+ * postures were recorded — but never evidence measured with an automated
+ * answerer, whose approvals a normal delegation will not get.
+ * @param {Record<string, any>} measured
  * @param {string} role @param {string} backend @param {string|null} model @param {string|null} effort
  */
-export function routeEvidenceKey(role, backend, model, effort) {
-  return [role, backend, model ?? '', effort ?? ''].join('|');
+export function findRouteEvidence(measured, role, backend, model, effort) {
+  const wanted = routeEvidenceKey(role, backend, model, effort);
+  const legacy = [role, backend, model ?? '', effort ?? ''].join('|');
+  const prefix = `${wanted}`;
+  // Entries carry how the posture was enforced (`read-only/backend-sandbox`),
+  // so match on the mode and take the strongest enforcement recorded for it.
+  const candidates = Object.entries(measured)
+    .filter(([key, entry]) => {
+      if (entry?.autoAnswer === true) return false;
+      if (key === legacy) return true;
+      if (key.startsWith(prefix)) return true;
+      const sameRoute = key.split('|').slice(0, 4).join('|') === legacy;
+      return sameRoute && keyPosture(key) === keyPosture(prefix);
+    })
+    .map(([, entry]) => entry);
+  if (candidates.length === 0) return null;
+  if (candidates.length === 1) return candidates[0];
+  // Several enforcement variants of the same mode: prefer the one with the
+  // most runs, so a single stray measurement cannot outweigh a real sample.
+  return candidates.reduce((best, entry) => ((entry.runs ?? 0) > (best.runs ?? 0) ? entry : best));
 }
 
 /**
@@ -182,7 +225,7 @@ export function route(input) {
     const modelSource = candidate.modelSource ?? (candidate.model ? 'route-table' : model ? 'backend-default' : 'unset');
 
     const effortSupport = resolveEffortSupport(backend, candidate.effort);
-    const evidence = measured[routeEvidenceKey(role, candidate.backend, model, candidate.effort ?? null)] ?? null;
+    const evidence = findRouteEvidence(measured, role, candidate.backend, model, candidate.effort ?? null);
     eligible.push({
       backend: candidate.backend,
       provider: backend.provider,

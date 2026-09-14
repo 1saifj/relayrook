@@ -427,7 +427,11 @@ function contentTexts(content) {
  */
 function workspacePrefixes(workspace) {
   if (!workspace) return [];
-  const base = path.resolve(String(workspace));
+  const raw = String(workspace);
+  // A Windows workspace is kept verbatim as well: `path.resolve` on a POSIX
+  // host would turn `C:\ws` into a relative path under the cwd, and the
+  // Windows comparison below would then find no prefix to match at all.
+  const base = isWindowsAbsolute(raw) ? path.win32.resolve(raw) : path.resolve(raw);
   const variants = new Set([base]);
   try {
     variants.add(realpathSync(base));
@@ -460,10 +464,14 @@ function isWindowsAbsolute(candidate) {
 function escapesWorkspace(candidate, prefixes) {
   if (prefixes.length === 0) return candidate.startsWith('/') || isWindowsAbsolute(candidate);
   if (isWindowsAbsolute(candidate)) {
-    const normalized = candidate.replace(/\\/g, '/');
+    // Resolved with the Windows rules, so `C:\\ws\\..\\outside` is an escape
+    // rather than a string that happens to start with the prefix.
+    const resolved = path.win32.resolve(candidate).toLowerCase();
     return !prefixes.some((prefix) => {
-      const p = prefix.replace(/\\/g, '/');
-      return normalized === p || normalized.toLowerCase().startsWith(`${p.toLowerCase()}/`);
+      if (!isWindowsAbsolute(prefix)) return false;
+      const base = path.win32.resolve(prefix).toLowerCase();
+      const relative = path.win32.relative(base, resolved);
+      return relative === '' || (!relative.startsWith('..') && !path.win32.isAbsolute(relative));
     });
   }
   return prefixes.every((prefix) => {

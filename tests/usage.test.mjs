@@ -145,3 +145,13 @@ test('a backend error message survives whatever shape the provider chose', () =>
   assert.equal(backendErrorMessage(null), '');
   assert.match(backendErrorMessage({ weird: true }), /weird/);
 });
+
+test('a local file permission error is not a provider auth failure', () => {
+  // EACCES on a workspace file would otherwise be reported as `auth`, telling
+  // the host to reroute to a different backend over a file mode.
+  const local = classifyBackendError('open /workspace/x: permission denied [EACCES]');
+  assert.equal(local.category, 'unknown');
+  assert.equal(local.reroute, false);
+  assert.equal(classifyBackendError('Request failed [401]').category, 'auth');
+  assert.equal(classifyBackendError('invalid_api_key').category, 'auth');
+});

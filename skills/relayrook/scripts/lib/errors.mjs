@@ -127,7 +127,10 @@ export function classifyBackendError(message) {
   if (/rate limit|too many requests|429|throttl/.test(text)) {
     return { category: 'rate-limit', retryable: true, reroute: false };
   }
-  if (/unauthorized|unauthenticated|not authenticated|invalid api key|401|403|log ?in again|permission denied/.test(text)) {
+  // `permission denied` on its own is usually a local EACCES, not a provider
+  // rejection, and calling it `auth` would tell a host to reroute over a file
+  // mode. It only counts alongside an authentication signal.
+  if (/unauthorized|unauthenticated|not authenticated|invalid api key|401|403|log ?in again/.test(text)) {
     return { category: 'auth', retryable: false, reroute: true };
   }
   return { category: 'unknown', retryable: true, reroute: false };

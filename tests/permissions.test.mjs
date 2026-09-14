@@ -394,3 +394,24 @@ test('a review role refuses a session that could write unsupervised', async () =
     rmSync(stateDir, { recursive: true, force: true });
   }
 });
+
+test('a Windows workspace is compared with Windows rules', () => {
+  const workspace = 'C:\\workspace';
+  const inside = classifyPermissionRequest(
+    { toolCall: { kind: 'edit', title: 'Write file', locations: [{ path: 'C:\\workspace\\src\\a.mjs' }] } },
+    { workspace },
+  );
+  assert.equal(inside.outsideWorkspace, false);
+  // A prefix test would call this inside; resolving it the way Windows does
+  // shows it leaving the workspace.
+  const traversal = classifyPermissionRequest(
+    { toolCall: { kind: 'edit', title: 'Write file', locations: [{ path: 'C:\\workspace\\..\\outside.txt' }] } },
+    { workspace },
+  );
+  assert.equal(traversal.outsideWorkspace, true);
+  const otherDrive = classifyPermissionRequest(
+    { toolCall: { kind: 'edit', title: 'Write file', locations: [{ path: 'D:\\data\\x' }] } },
+    { workspace },
+  );
+  assert.equal(otherDrive.outsideWorkspace, true);
+});

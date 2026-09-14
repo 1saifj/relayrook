@@ -92,12 +92,35 @@ test('measured route evidence outweighs configured weight once it exists', () =>
   assert.equal(opencode.reason, 'lower-score');
 });
 
-test('measured evidence keys include role, backend, model and effort', async () => {
-  const { routeEvidenceKey, isMeasured } = await import('../src/routing.mjs');
-  assert.equal(routeEvidenceKey('code-review', 'codex', 'gpt-5.6-sol', 'high'), 'code-review|codex|gpt-5.6-sol|high');
+test('measured evidence is keyed by route and by the posture it was measured under', async () => {
+  const { routeEvidenceKey, findRouteEvidence, isMeasured } = await import('../src/routing.mjs');
+  // A review's canonical posture is read-only, so that is what routing asks for.
+  assert.equal(
+    routeEvidenceKey('code-review', 'codex', 'gpt-5.6-sol', 'high'),
+    'code-review|codex|gpt-5.6-sol|high|read-only',
+  );
+  assert.equal(
+    routeEvidenceKey('implementation', 'devin', 'swe-2-max', null),
+    'implementation|devin|swe-2-max||gated',
+  );
   assert.equal(isMeasured({ runs: 2 }), true);
   assert.equal(isMeasured({ runs: 1 }), false);
   assert.equal(isMeasured(null), false);
+
+  // Enforcement variants of the same mode are found; a wider posture is not.
+  const measured = {
+    'code-review|codex|gpt-5.6-sol|high|read-only/backend-sandbox': { runs: 4 },
+    'code-review|codex|gpt-5.6-sol|high|auto-edits+auto': { runs: 9, autoAnswer: true },
+    'implementation|devin|swe-2-max||gated': { runs: 3 },
+  };
+  assert.equal(findRouteEvidence(measured, 'code-review', 'codex', 'gpt-5.6-sol', 'high').runs, 4);
+  assert.equal(findRouteEvidence(measured, 'implementation', 'devin', 'swe-2-max', null).runs, 3);
+  // Evidence gathered with an automated answerer is never used for routing.
+  assert.equal(findRouteEvidence({ 'code-review|codex|m|high|read-only': { runs: 5, autoAnswer: true } },
+    'code-review', 'codex', 'm', 'high'), null);
+  // Evidence written before postures were recorded still counts.
+  assert.equal(findRouteEvidence({ 'code-review|codex|m|high': { runs: 6 } },
+    'code-review', 'codex', 'm', 'high').runs, 6);
 });
 
 test('an agent pin narrows the field to exactly that backend', () => {

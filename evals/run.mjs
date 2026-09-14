@@ -25,7 +25,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { classifyPermissionRequest } from '../src/permissions.mjs';
+import { classifyPermissionRequest, defaultPermissionMode } from '../src/permissions.mjs';
 
 import { hasBackend } from '../src/backends.mjs';
 import { resolveStateDir } from '../src/state.mjs';
@@ -394,12 +394,21 @@ export function aggregateEvidence(runs) {
     // edit without asking is not comparable with one that stopped at every
     // write, and merging them would let routing prefer a permission level the
     // route will not get in normal use.
-    const posture = `${r.permissionMode ?? 'default'}${r.autoAnswer ? '+auto' : ''}`;
+    //
+    // The mode is taken from the session's own report rather than from the
+    // flag, so `--permission-mode read-only` and the same mode arrived at by
+    // default are one measurement, and two runs whose postures were enforced
+    // differently are two.
+    const declared =
+      r.permissionMode && r.permissionMode !== 'default' ? r.permissionMode : defaultPermissionMode({ role: r.role });
+    const mode = r.permissions?.mode ?? declared;
+    const enforcement = r.permissions?.enforcement ?? null;
+    const posture = `${mode ?? 'unknown'}${enforcement ? `/${enforcement}` : ''}${r.autoAnswer ? '+auto' : ''}`;
     const key = `${r.role}|${r.backend}|${r.model ?? ''}|${r.effort ?? ''}|${posture}`;
     const e = (evidence[key] ??= {
-      permissionMode: r.permissionMode ?? 'default',
+      permissionMode: mode ?? 'unknown',
       autoAnswer: r.autoAnswer === true,
-      enforcement: r.permissions?.enforcement ?? null,
+      enforcement,
       runs: 0, successes: 0, scopeCompliant: 0, scopeKnown: 0,
       precisionSamples: [], latencySamples: [], uncachedInputSamples: [], totalTokenSamples: [],
     });
