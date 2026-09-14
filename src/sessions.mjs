@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { callControl, pingControl } from './control.mjs';
 import { EventLog, SessionStore, listSessionKeys } from './state.mjs';
 import { fail, ERROR_CODES } from './errors.mjs';
-import { defaultPermissionMode, isUngated, resolvePermissionPosture } from './permissions.mjs';
+import { defaultPermissionMode, resolvePermissionPosture } from './permissions.mjs';
 import { getBackend } from './backends.mjs';
 import { sessionKey, sleep, redactPath } from './util.mjs';
 import { resolveClaudeAdapter, whichSync } from './discovery.mjs';
@@ -151,13 +151,26 @@ export async function startSession(spec) {
   const workspace = path.resolve(spec.workspace);
   const permissionMode =
     spec.permissionMode ?? defaultPermissionMode({ role: spec.role ?? null, profile: spec.profile ?? null });
-  // A read-only role that cannot be enforced is a contradiction, not a
-  // preference: refuse rather than start a reviewer that may write.
-  if ((spec.role === 'code-review' || spec.role === 'security-review') && isUngated(permissionMode)) {
+  // Resolved before the key, because the effective Codex sandbox and approval
+  // policy are part of session identity and of the review-role check. The
+  // second resolution below only adds the on-disk config file, which needs the
+  // session directory this key names.
+  const effectivePosture = resolvePermissionPosture({
+    backend: spec.backend,
+    mode: permissionMode,
+    codexOverrides: spec.codex ?? null,
+  });
+  if ((spec.role === 'code-review' || spec.role === 'security-review') && !effectivePosture.reviewSafe) {
     throw fail(
       ERROR_CODES.role_posture_mismatch,
-      `Role ${spec.role} cannot run with permission mode ${permissionMode}`,
-      { role: spec.role, permissionMode },
+      `Role ${spec.role} needs a read-only posture; ${spec.backend} would run ${permissionMode} ` +
+        `(${effectivePosture.enforcement})`,
+      {
+        role: spec.role,
+        permissionMode,
+        enforcement: effectivePosture.enforcement,
+        codex: effectivePosture.codex,
+      },
     );
   }
   const key = sessionKey({
@@ -167,6 +180,7 @@ export async function startSession(spec) {
     effort: spec.effort ?? null,
     profile: spec.profile ?? 'default',
     permissionMode,
+    codex: effectivePosture.codex,
   });
   const store = new SessionStore(spec.stateDir, key).ensure();
   const startTimeoutMs = spec.startTimeoutMs ?? 120000;
@@ -254,6 +268,8 @@ export async function startSession(spec) {
         mode: posture.mode,
         mechanism: posture.mechanism,
         enforcement: posture.enforcement,
+        reviewSafe: posture.reviewSafe,
+        writesUnsupervised: posture.writesUnsupervised,
         note: posture.note,
         requestedUnsupported: posture.requestedUnsupported,
         appliedEnv: Object.keys(posture.env),

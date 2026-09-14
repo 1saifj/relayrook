@@ -221,3 +221,42 @@ test('extend refuses when no turn is active', async () => {
     (/** @type {any} */ err) => err.code === 'no_active_turn',
   );
 });
+
+test('answering a permission restarts the activity clock', async () => {
+  // The clock must restart when the turn resumes, not carry the wait with it:
+  // a timer armed before the pause could otherwise fire moments later, read
+  // the whole wait as backend silence, and cancel a turn that just resumed.
+  const submitted = await promptSession({
+    stateDir: ctx.stateDir,
+    key: ctx.key,
+    text: 'PERMISSION_THEN_SILENT',
+    stallTimeoutMs: 0,
+    timeoutMs: 0,
+  });
+
+  const paused = await waitSession({ stateDir: ctx.stateDir, key: ctx.key, timeoutMs: 10000 });
+  assert.equal(paused.waitOutcome, 'awaiting-permission');
+  await sleep(1200);
+
+  const pending = await statusSession({ stateDir: ctx.stateDir, key: ctx.key });
+  assert.ok(pending.turn.watchdog.silentMs >= 1000, 'the pause itself is visible as silence');
+
+  await answerPermission({
+    stateDir: ctx.stateDir,
+    key: ctx.key,
+    requestId: pending.pendingPermissions[0].requestId,
+    optionId: 'allow_once',
+  });
+  const resumed = await statusSession({ stateDir: ctx.stateDir, key: ctx.key });
+  const silentAfterResume = resumed.turn.watchdog.silentMs ?? 0;
+  assert.ok(silentAfterResume < 500, `the clock restarted on resume, got ${silentAfterResume}ms`);
+
+  const finished = await waitSession({
+    stateDir: ctx.stateDir,
+    key: ctx.key,
+    turnId: submitted.turnId,
+    timeoutMs: 10000,
+    stopOnStall: false,
+  });
+  assert.equal(finished.turn.state, 'completed');
+});

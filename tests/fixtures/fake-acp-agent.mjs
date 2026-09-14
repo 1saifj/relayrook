@@ -10,6 +10,7 @@
  *   SLOW             stay running until cancelled or the turn times out
  *   HEARTBEAT        stream a thought chunk every FAKE_ACP_HEARTBEAT_MS forever
  *   LAUNCH_REPORT    reply with the argv tail and permission env vars it was launched with
+ *   PERMISSION_THEN_SILENT  ask for permission, then stay silent for FAKE_ACP_SILENT_MS
  *   REFUSE           finish with stopReason "refusal"
  *   NO_STOP_REASON   return a result with no stopReason at all
  *
@@ -102,6 +103,30 @@ async function runPrompt(id, params) {
     await Promise.all([ask('a'), ask('b')]);
     update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'DOUBLE_PERMISSION_DONE' } });
     send({ id, result: { stopReason: activePrompt?.cancelled ? 'cancelled' : 'end_turn' } });
+    activePrompt = null;
+    return;
+  }
+
+  if (text.includes('PERMISSION_THEN_SILENT')) {
+    // Asks, then says nothing at all after the answer — so a test can observe
+    // what the activity clock does at the moment the turn resumes.
+    const rpcId = 9500 + nextRequestId++;
+    await new Promise((resolve) => {
+      pending.set(rpcId, resolve);
+      send({ id: rpcId, method: 'session/request_permission', params: {
+        sessionId, requestId: `perm-silent-${rpcId}`,
+        toolCall: { toolCallId: 'exec_silent', title: 'Run printf', kind: 'execute' },
+        options: [{ optionId: 'allow_once', name: 'Allow once', kind: 'allow_once' }],
+      } });
+    });
+    await new Promise((resolve) => setTimeout(resolve, Number(process.env.FAKE_ACP_SILENT_MS ?? 1200)));
+    if (activePrompt?.cancelled) {
+      send({ id, result: { stopReason: 'cancelled' } });
+      activePrompt = null;
+      return;
+    }
+    update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'SILENT_RESUME_DONE' } });
+    send({ id, result: { stopReason: 'end_turn' } });
     activePrompt = null;
     return;
   }

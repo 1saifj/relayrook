@@ -52,9 +52,19 @@ export function backendErrorMessage(error) {
   }
   if (typeof error === 'object') {
     const direct = error.message ?? error.error ?? error.detail ?? null;
-    if (typeof direct === 'string') return backendErrorMessage(direct);
-    if (direct && typeof direct === 'object') return backendErrorMessage(direct);
-    return JSON.stringify(error);
+    // Codes travel with the message: providers put the machine-readable reason
+    // in a sibling field (`code`, `type`, `codexErrorInfo`), and dropping it
+    // leaves a quota failure looking like an unrecognised one.
+    const codes = [error.code, error.type, error.codexErrorInfo, error.status]
+      .filter((value) => typeof value === 'string' || typeof value === 'number')
+      .join(' ');
+    const message =
+      typeof direct === 'string'
+        ? backendErrorMessage(direct)
+        : direct && typeof direct === 'object'
+          ? backendErrorMessage(direct)
+          : JSON.stringify(error);
+    return codes ? `${message} [${codes}]`.trim() : message;
   }
   return String(error);
 }
@@ -611,6 +621,10 @@ export class SessionWorker {
         if (this.turn && this.turn.state === 'awaiting-permission') {
           this.turn.state = this.pendingPermissions.size > 0 ? 'awaiting-permission' : 'running';
         }
+        // The turn is live again from here. Without this, a stall timer armed
+        // before the pause can fire a moment later, read the whole wait as
+        // backend silence, and cancel a turn that just resumed.
+        this.#noteActivity();
         this.#emit({
           kind: 'permission_resolved',
           requestId,

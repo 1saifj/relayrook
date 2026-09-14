@@ -99,7 +99,11 @@ posture, in `meta.permissions.enforcement`:
 | `auto-edits` | Edit the workspace without asking; commands still ask | A bounded task in a clean, committed, disposable tree — a branch or worktree you can throw away — where per-edit round trips would dominate the work |
 | `full-auto` | Everything, silently | Only when the user asked for an unattended run in a sandbox or throwaway container. Nothing reaches you, so you cannot claim you supervised it |
 
-`enforcement` is the honest part. `backend-sandbox` means the operating system
+`enforcement` follows the posture the session actually got, not the mode's
+name: a Codex session started `read-only` but pinned to `danger-full-access`
+keeps approvals off, so it reports `prompt-only`. The session also reports
+`reviewSafe`, and a review role refuses to start — or to prompt into a reused
+session — unless that is true. `backend-sandbox` means the operating system
 refuses the action whichever tool asks — only Codex's sandbox does that.
 `parent-gated` means it reaches you as a request and cannot proceed until you
 answer. `prompt-only` means nothing but the prompt discourages it — never report
@@ -113,10 +117,12 @@ how the session stays read-only.
 
 Every pending request arrives with a `classification` — `action`, the
 `command` (found wherever the backend put it), `paths`, `outsideWorkspace`,
-`destructive`, `network`, `touchesSecrets`, and a timid `recommendation` of
-`allow` or `ask-user` with `reasons`. Read it as evidence, not as an answer:
-`allow` means nothing in the request left the workspace or looked dangerous,
-and the decision is still yours.
+`destructive`, `network`, `touchesSecrets`, `allowlisted`, and a timid
+`recommendation` of `allow` or `ask-user` with `reasons`. A shell command is
+only ever recommended when it matches a positive allowlist, because the command
+that destroys a day of work is always the one no blacklist mentioned. Read it
+as evidence, not as an answer: `allow` means nothing in the request left the
+workspace or looked dangerous, and the decision is still yours.
 
 Deciding one request (step 7) is a narrower question than choosing a mode:
 

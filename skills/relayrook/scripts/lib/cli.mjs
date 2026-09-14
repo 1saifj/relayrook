@@ -648,14 +648,34 @@ async function commandPrompt(flags, stateDir, env) {
  * Review roles run only where the session's recorded posture is read-only.
  * On Codex that posture is the negotiated sandbox — a `workspace-write`
  * session would let the reviewer edit files without a permission request
- * ever reaching the parent. ACP sessions always route writes through the
- * parent's permission channel, so the check is Codex-specific.
+ * ever reaching the parent — and so would an ACP session started with
+ * `auto-edits` or `full-auto`, where the backend's own permission mode was
+ * widened at launch. The check therefore reads the session's recorded posture
+ * for every backend, not just Codex.
  * @param {string|null} role
  * @param {any} sessionMeta
  */
 function assertReviewPosture(role, sessionMeta) {
   const reviewRole = role === 'code-review' || role === 'security-review';
-  if (!reviewRole || sessionMeta?.backend !== 'codex') return;
+  if (!reviewRole) return;
+  const permissions = sessionMeta?.permissions ?? null;
+  if (permissions) {
+    if (permissions.reviewSafe === true) return;
+    throw fail(
+      ERROR_CODES.role_posture_mismatch,
+      `Role ${role} requires a read-only session posture; this ${sessionMeta?.backend ?? 'unknown'} session runs ` +
+        `permission mode '${permissions.mode}' (${permissions.enforcement}). ` +
+        `Start the session with --role ${role} or --permission-mode read-only.`,
+      {
+        role,
+        backend: sessionMeta?.backend ?? null,
+        permissionMode: permissions.mode,
+        enforcement: permissions.enforcement,
+      },
+    );
+  }
+  // A session recorded before postures existed: fall back to the Codex sandbox.
+  if (sessionMeta?.backend !== 'codex') return;
   if (sessionMeta?.codex?.sandbox === 'read-only') return;
   throw fail(
     ERROR_CODES.role_posture_mismatch,

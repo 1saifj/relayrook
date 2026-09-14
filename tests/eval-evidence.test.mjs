@@ -12,7 +12,7 @@ const run = (over) => ({
 
 test('skips never count toward runs or any dimension', () => {
   const out = aggregateEvidence([run({ status: 'skip' }), run({})]);
-  const e = out['code-review|codex|m|high'];
+  const e = out['code-review|codex|m|high|default'];
   assert.equal(e.runs, 1);
   assert.equal(e.successRate, 1);
   assert.equal(e.samples.latency, 1);
@@ -20,14 +20,14 @@ test('skips never count toward runs or any dimension', () => {
 
 test('a single run stays anecdotal input: runs below the measured threshold', () => {
   const out = aggregateEvidence([run({})]);
-  assert.equal(out['code-review|codex|m|high'].runs, 1);
+  assert.equal(out['code-review|codex|m|high|default'].runs, 1);
 });
 
 test('dimensions no run reported stay null, not zero or invented', () => {
   const out = aggregateEvidence([
     run({ scopeCompliant: null, latencyMs: null, usage: null }),
   ]);
-  const e = out['code-review|codex|m|high'];
+  const e = out['code-review|codex|m|high|default'];
   assert.equal(e.scopeComplianceRate, null);
   assert.equal(e.meanLatencyMs, null);
   assert.equal(e.meanTotalTokens, null);
@@ -40,7 +40,7 @@ test('means weight only the runs that reported the dimension', () => {
     run({ latencyMs: 3000 }),
     run({ latencyMs: null, status: 'fail' }),
   ]);
-  const e = out['code-review|codex|m|high'];
+  const e = out['code-review|codex|m|high|default'];
   assert.equal(e.runs, 3);
   assert.equal(e.meanLatencyMs, 2000);
   assert.equal(e.samples.latency, 2);
@@ -52,7 +52,7 @@ test('merging across invocations accumulates runs and reweights means', () => {
   const first = aggregateEvidence([run({ latencyMs: 1000, usage: { uncachedInputTokens: 100, totalTokens: 200 } })]);
   const second = aggregateEvidence([run({ latencyMs: 3000, usage: { uncachedInputTokens: 300, totalTokens: 600 } })]);
   const merged = mergeEvidence(mergeEvidence({}, first), second);
-  const e = merged['code-review|codex|m|high'];
+  const e = merged['code-review|codex|m|high|default'];
   assert.equal(e.runs, 2);
   assert.equal(e.meanLatencyMs, 2000);
   assert.equal(e.meanUncachedInputTokens, 200);
@@ -61,10 +61,10 @@ test('merging across invocations accumulates runs and reweights means', () => {
 });
 
 test('a legacy entry without sample counts weights its means by runs', () => {
-  const legacy = { 'code-review|codex|m|high': { runs: 2, successRate: 1, precision: 1, meanLatencyMs: 1000 } };
+  const legacy = { 'code-review|codex|m|high|default': { runs: 2, successRate: 1, precision: 1, meanLatencyMs: 1000 } };
   const next = aggregateEvidence([run({ latencyMs: 3000 })]);
   const merged = mergeEvidence(legacy, next);
-  const e = merged['code-review|codex|m|high'];
+  const e = merged['code-review|codex|m|high|default'];
   assert.equal(e.runs, 3);
   // (1000*2 + 3000*1) / 3
   assert.equal(Math.round(e.meanLatencyMs), 1667);
@@ -111,4 +111,22 @@ test('informational observations do not count as scored vulnerabilities', async 
   assert.equal(scores.unscoredObservations, 1);
   assert.equal(scores.precision, 1);
   assert.equal(scores.recall, 1);
+});
+
+test('runs measured under different permission postures are never merged', () => {
+  // A run that could edit without asking is not comparable with one that
+  // stopped at every write; averaging them would let routing prefer a
+  // permission level the route will not get in normal use.
+  const out = aggregateEvidence([
+    run({ permissionMode: 'gated', latencyMs: 1000 }),
+    run({ permissionMode: 'auto-edits', autoAnswer: true, latencyMs: 5000 }),
+  ]);
+  const gated = out['code-review|codex|m|high|gated'];
+  const auto = out['code-review|codex|m|high|auto-edits+auto'];
+  assert.equal(gated.runs, 1);
+  assert.equal(auto.runs, 1);
+  assert.equal(gated.meanLatencyMs, 1000);
+  assert.equal(auto.meanLatencyMs, 5000);
+  assert.equal(auto.autoAnswer, true);
+  assert.equal(gated.autoAnswer, false);
 });

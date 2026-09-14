@@ -125,9 +125,21 @@ file was unchanged, which is the gate working; but a caller that auto-approves
 shell commands in a "read-only" session has no read-only session. Read bash
 requests in a review with that in mind.
 
-An explicit `--sandbox` or `--approval-policy` overrides the Codex mapping; the
-posture then reports `parent-gated` with a note that the caller pinned it,
-rather than keeping a claim the mapping no longer makes.
+An explicit `--sandbox` or `--approval-policy` overrides the Codex mapping, and
+the reported enforcement is then derived from the effective pair rather than
+from the mode's name:
+
+| Sandbox | Approvals | Enforcement | Writes without asking |
+| :--- | :--- | :--- | :--- |
+| `read-only` | any | `backend-sandbox` | no |
+| `workspace-write` | `on-request` / `untrusted` | `parent-gated` | no |
+| `workspace-write` | `never` | `backend-sandbox` | yes, inside the workspace |
+| `danger-full-access` | `on-request` / `untrusted` | `parent-gated` | no |
+| `danger-full-access` | `never` | `prompt-only` | yes, anywhere |
+
+The effective sandbox and approval policy are also part of the session key, so
+a plain `gated` start can never reuse a warm worker that was pinned wider, and
+a review role refuses any posture whose `reviewSafe` is false.
 
 Devin's `--sandbox` flag (macOS seatbelt / Linux bwrap) is a separate process
 sandbox for its exec tool and is not driven by `--permission-mode`; a caller

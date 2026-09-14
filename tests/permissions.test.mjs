@@ -7,6 +7,7 @@ import path from 'node:path';
 import {
   classifyPermissionRequest,
   defaultPermissionMode,
+  isAllowlistedCommand,
   isUngated,
   normalizePermissionMode,
   PERMISSION_MODES,
@@ -97,15 +98,36 @@ test('opencode postures are written as a config file the CLI actually reads', ()
   }
 });
 
-test('a caller pin on the Codex sandbox overrides the mapping and says so', () => {
-  const posture = resolvePermissionPosture({
+test('enforcement follows the effective Codex policy, not the mode name', () => {
+  // A read-only mode pinned to a wider sandbox keeps the mapped
+  // `approvalPolicy: never`, so nothing sandboxes it and nothing asks.
+  const wideOpen = resolvePermissionPosture({
+    backend: 'codex',
+    mode: 'read-only',
+    codexOverrides: { sandbox: 'danger-full-access' },
+  });
+  assert.equal(wideOpen.enforcement, 'prompt-only');
+  assert.equal(wideOpen.reviewSafe, false, 'a review must not run in it');
+
+  // workspace-write with approvals off is bounded but unsupervised: fine for
+  // implementation, wrong for a reviewer.
+  const bounded = resolvePermissionPosture({
     backend: 'codex',
     mode: 'read-only',
     codexOverrides: { sandbox: 'workspace-write' },
   });
-  assert.equal(posture.codex.sandbox, 'workspace-write');
-  assert.equal(posture.enforcement, 'parent-gated');
-  assert.match(posture.note, /caller pinned/);
+  assert.equal(bounded.enforcement, 'backend-sandbox');
+  assert.equal(bounded.writesUnsupervised, true);
+  assert.equal(bounded.reviewSafe, false);
+
+  // Widening the sandbox but keeping approvals on is still gated.
+  const asked = resolvePermissionPosture({
+    backend: 'codex',
+    mode: 'gated',
+    codexOverrides: { sandbox: 'danger-full-access', approvalPolicy: 'on-request' },
+  });
+  assert.equal(asked.enforcement, 'parent-gated');
+  assert.equal(asked.writesUnsupervised, false);
 });
 
 test('review roles default to read-only and implementation to gated', () => {
@@ -286,4 +308,89 @@ test('an agent cannot widen the workspace with its own option names', () => {
   );
   assert.equal(verdict.recommendation, 'ask-user');
   assert.equal(verdict.outsideWorkspace, true);
+});
+
+test('escapes are found however they are written', () => {
+  const workspace = '/tmp/relayrook-escape-ws';
+  /** @type {[string, any][]} */
+  const escapes = [
+    ['relative traversal', { kind: 'execute', rawInput: { command: 'printf x > ../outside.txt' } }],
+    ['lexical traversal', { kind: 'execute', rawInput: { command: `cat ${workspace}/../outside.txt` } }],
+    ['home directory', { kind: 'execute', rawInput: { command: 'cat ~/notes.txt' } }],
+    ['windows drive', { kind: 'edit', title: 'Write file', locations: [{ path: 'C:\\Windows\\System32\\drivers\\etc\\hosts' }] }],
+    ['unc share', { kind: 'edit', title: 'Write file', locations: [{ path: '\\\\server\\share\\x' }] }],
+  ];
+  for (const [name, toolCall] of escapes) {
+    const verdict = classifyPermissionRequest({ toolCall }, { workspace });
+    assert.equal(verdict.outsideWorkspace, true, `${name} is outside the workspace`);
+    assert.equal(verdict.recommendation, 'ask-user', name);
+  }
+});
+
+test('an execute request is recommended only from a positive allowlist', () => {
+  const workspace = '/tmp/relayrook-allowlist-ws';
+  // Absence from a blacklist is not evidence of safety: these are the commands
+  // nobody thought to list.
+  for (const command of ['git restore .', 'gh pr create --fill', 'git stash drop', 'git branch -D main']) {
+    const verdict = classifyPermissionRequest(
+      { toolCall: { kind: 'execute', rawInput: { command } } },
+      { workspace },
+    );
+    assert.equal(verdict.allowlisted, false, `${command} is not allowlisted`);
+    assert.equal(verdict.recommendation, 'ask-user', command);
+  }
+  for (const command of ['npm test', 'git status --short', 'node check.mjs', 'cat a.mjs && git diff']) {
+    const verdict = classifyPermissionRequest(
+      { toolCall: { kind: 'execute', rawInput: { command } } },
+      { workspace },
+    );
+    assert.equal(verdict.recommendation, 'allow', command);
+  }
+  // A hidden second command must not ride along on an allowlisted first one.
+  assert.equal(isAllowlistedCommand('git status; rm -rf /'), false);
+  assert.equal(isAllowlistedCommand('echo $(curl example.invalid)'), false);
+  assert.equal(isAllowlistedCommand('cat a.mjs > /etc/passwd'), false);
+  assert.equal(isAllowlistedCommand('node -e "process.exit(1)"'), false);
+});
+
+test('a widened Codex session cannot be reused by a plain one', () => {
+  const base = {
+    backend: 'codex',
+    workspace: process.cwd(),
+    model: 'gpt-5.6-sol',
+    profile: 'default',
+    permissionMode: 'gated',
+  };
+  assert.notEqual(
+    sessionKey(base),
+    sessionKey({ ...base, codex: { sandbox: 'danger-full-access', approvalPolicy: 'never' } }),
+    'the effective sandbox is part of session identity',
+  );
+  assert.notEqual(
+    sessionKey({ ...base, codex: { sandbox: 'workspace-write', approvalPolicy: 'on-request' } }),
+    sessionKey({ ...base, codex: { sandbox: 'workspace-write', approvalPolicy: 'never' } }),
+    'so is the approval policy',
+  );
+});
+
+test('a review role refuses a session that could write unsupervised', async () => {
+  const { startSession } = await import('../src/sessions.mjs');
+  const stateDir = mkdtempSync(path.join(os.tmpdir(), 'relayrook-review-guard-'));
+  try {
+    // Named read-only, pinned wide open: the name is not the posture.
+    await assert.rejects(
+      () =>
+        startSession({
+          stateDir,
+          backend: 'codex',
+          workspace: stateDir,
+          role: 'security-review',
+          permissionMode: 'read-only',
+          codex: { sandbox: 'danger-full-access' },
+        }),
+      (/** @type {any} */ err) => err.code === 'role_posture_mismatch',
+    );
+  } finally {
+    rmSync(stateDir, { recursive: true, force: true });
+  }
 });

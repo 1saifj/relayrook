@@ -115,14 +115,19 @@ export const STOP_REASONS = Object.freeze([
  * @returns {{category: 'quota'|'auth'|'rate-limit'|'unknown', retryable: boolean, reroute: boolean}}
  */
 export function classifyBackendError(message) {
-  const text = String(message ?? '').toLowerCase();
+  // Providers write the same condition as prose, as an HTTP status, or as a
+  // canonical code (`insufficient_quota`, `rate-limit-exceeded`). Underscores
+  // and hyphens are normalised to spaces so one pattern set covers all three.
+  const text = String(message ?? '')
+    .toLowerCase()
+    .replace(/[_-]+/g, ' ');
   if (/usage limit|out of credits|purchase more credits|quota (?:exceeded|exhausted)|insufficient (?:credits|quota)/.test(text)) {
     return { category: 'quota', retryable: false, reroute: true };
   }
-  if (/rate limit|too many requests|429/.test(text)) {
+  if (/rate limit|too many requests|429|throttl/.test(text)) {
     return { category: 'rate-limit', retryable: true, reroute: false };
   }
-  if (/unauthorized|not authenticated|invalid api key|401|403|log ?in again/.test(text)) {
+  if (/unauthorized|unauthenticated|not authenticated|invalid api key|401|403|log ?in again|permission denied/.test(text)) {
     return { category: 'auth', retryable: false, reroute: true };
   }
   return { category: 'unknown', retryable: true, reroute: false };

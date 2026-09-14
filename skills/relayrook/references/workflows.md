@@ -103,7 +103,13 @@ options, so a parent decides on evidence instead of on a title:
 | `destructive` | `rm -rf`, `git push`, `git reset --hard`, `sudo`, `npm publish` and similar |
 | `network` | The action leaves this machine |
 | `touchesSecrets` | The target looks like a credential (`.env`, `~/.ssh`, `credentials`) |
-| `recommendation` | `allow` only when none of the above fired and the request named something judgeable; otherwise `ask-user`, with `reasons` |
+| `allowlisted` | The command matches the positive allowlist of read-only and build/test commands; every segment of a compound command must match, and substitution or redirection disqualifies it |
+| `recommendation` | `allow` only when none of the above fired, the request named something judgeable, and an execute request is allowlisted; otherwise `ask-user`, with `reasons` |
+
+Paths are resolved against the workspace before comparison, so `../outside`,
+`<workspace>/../outside`, `~/x` and a Windows absolute path are all escapes
+rather than "not absolute, therefore inside"; `/tmp` and `/private/tmp` are the
+same directory.
 
 The recommendation is deliberately timid and never names an option: relay only
 options the agent advertised, and treat `allow` as "nothing suspicious was

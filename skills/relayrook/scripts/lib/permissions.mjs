@@ -1,4 +1,5 @@
 import { realpathSync } from 'node:fs';
+import { homedir } from 'node:os';
 import path from 'node:path';
 
 import { fail, ERROR_CODES } from './errors.mjs';
@@ -193,7 +194,8 @@ export function normalizePermissionMode(mode) {
  * @param {{backend: string, mode: string, sessionDir?: string|null,
  *   codexOverrides?: {sandbox?: string, approvalPolicy?: string}|null}} input
  * @returns {{mode: string, backend: string, mechanism: string, enforcement: string,
- *   note: string, requestedUnsupported: boolean, env: Record<string,string>, args: string[],
+ *   note: string, reviewSafe: boolean, writesUnsupervised: boolean,
+ *   requestedUnsupported: boolean, env: Record<string,string>, args: string[],
  *   codex: {sandbox?: string, approvalPolicy?: string}|null,
  *   configFile: {path: string, contents: string}|null}}
  */
@@ -207,6 +209,8 @@ export function resolvePermissionPosture(input) {
       mechanism: 'none',
       enforcement: 'prompt-only',
       note: 'RelayRook knows no permission mechanism for this backend',
+      reviewSafe: false,
+      writesUnsupervised: isUngated(mode),
       requestedUnsupported: false,
       env: {},
       args: [],
@@ -231,22 +235,71 @@ export function resolvePermissionPosture(input) {
   }
 
   const codex = entry.codex ? { ...entry.codex, ...(input.codexOverrides ?? {}) } : null;
-  // A caller that pins its own sandbox or approval policy has overridden the
-  // posture, so the enforcement claim must not keep describing the mapping.
+  // Enforcement follows the effective policy, never the mode's name. A
+  // `read-only` mode pinned to `danger-full-access` keeps the mapped
+  // `approvalPolicy: never`, so nothing sandboxes it and nothing asks — a
+  // posture that must not be reported as `parent-gated`.
   const overridden = Boolean(entry.codex && input.codexOverrides && Object.keys(input.codexOverrides).length > 0);
+  const derived = codex ? codexEnforcement(codex) : null;
+  const enforcement = derived ? derived.enforcement : entry.enforcement;
+  const note = derived && overridden ? derived.note : entry.note;
+  // A sandbox that still lets the agent write inside the workspace without
+  // asking is fine for implementation and wrong for a reviewer.
+  const writesUnsupervised = derived ? derived.writesUnsupervised : isUngated(mode);
 
   return {
     mode,
     backend: input.backend,
     mechanism: table.mechanism,
-    enforcement: overridden ? 'parent-gated' : entry.enforcement,
-    note: overridden ? 'caller pinned the sandbox or approval policy explicitly' : entry.note,
+    enforcement,
+    note,
+    // Whether this posture is fit for a read-only role: the mode must be
+    // read-only and something other than the prompt must hold it.
+    reviewSafe: mode === 'read-only' && enforcement !== 'prompt-only' && !writesUnsupervised,
+    writesUnsupervised,
     requestedUnsupported: Boolean(entry.unsupported),
     env,
     args,
     codex,
     configFile,
   };
+}
+
+/**
+ * What a Codex sandbox and approval policy actually enforce together.
+ * @param {{sandbox?: string, approvalPolicy?: string}} codex
+ */
+export function codexEnforcement(codex) {
+  const sandbox = codex.sandbox ?? 'workspace-write';
+  const approvals = codex.approvalPolicy ?? 'on-request';
+  const asks = approvals !== 'never';
+  if (sandbox === 'read-only') {
+    return {
+      enforcement: 'backend-sandbox',
+      writesUnsupervised: false,
+      note: 'an OS-level sandbox denies every write, shell included',
+    };
+  }
+  if (sandbox === 'workspace-write') {
+    return asks
+      ? {
+          enforcement: 'parent-gated',
+          writesUnsupervised: false,
+          note: 'writes stay in the workspace; anything else asks the parent',
+        }
+      : {
+          enforcement: 'backend-sandbox',
+          writesUnsupervised: true,
+          note: 'the sandbox bounds writes to the workspace; escapes fail instead of asking',
+        };
+  }
+  return asks
+    ? { enforcement: 'parent-gated', writesUnsupervised: false, note: 'no sandbox, but every action asks the parent' }
+    : {
+        enforcement: 'prompt-only',
+        writesUnsupervised: true,
+        note: 'no sandbox and no approvals: nothing constrains this session',
+      };
 }
 
 /**
@@ -261,7 +314,11 @@ export function isUngated(mode) {
 /** Commands whose blast radius is larger than the task that asked for them. */
 const DESTRUCTIVE_PATTERNS = [
   /\brm\s+(-[a-z]*\s+)*-[a-z]*[rf]/i,
-  /\bgit\s+(push|reset\s+--hard|clean\s+-[a-z]*f|checkout\s+--\s+\.)/i,
+  // `git restore .` and `git checkout .` discard uncommitted work as surely as
+  // a delete; `stash drop`, `branch -D` and `amend` rewrite it.
+  /\bgit\s+(push|reset\s+--hard|clean\s+-[a-z]*f|checkout\s+(--\s+)?[.*])/i,
+  /\bgit\s+(restore\s|stash\s+(drop|clear)|branch\s+-D|commit\s+--amend|filter-branch|rebase)/i,
+  /\b(gh|glab)\s+(pr|issue|release|repo|api|workflow|secret)\b/i,
   /\bsudo\b/i,
   /\bchmod\s+(-R\s+)?777\b/i,
   /\b(mkfs|dd\s+if=|shutdown|reboot|killall)\b/i,
@@ -275,10 +332,46 @@ const DESTRUCTIVE_PATTERNS = [
 const NETWORK_PATTERNS = [
   // Anchored as a command, so `~/.ssh/id_rsa` is a credential path rather than
   // a network call.
-  /(?:^|[\s|;&(])(curl|wget|nc|ssh|scp|rsync)\s/i,
+  /(?:^|[\s|;&(])(curl|wget|nc|ssh|scp|rsync|gh|glab|aws|gcloud|az|kubectl|terraform|heroku|flyctl|vercel|netlify)\s/i,
   /\bgit\s+(clone|fetch|pull|push|remote\s+add)\b/i,
   /\b(npm|pnpm|yarn|pip|pip3|cargo|go|brew|apt|apt-get)\s+(i\b|install|add|get|publish|update|upgrade)/i,
 ];
+
+/**
+ * Commands an automated answerer may approve on its own.
+ *
+ * A blacklist cannot make "allow" safe: the command that discards a day of
+ * work is always the one nobody thought to list. So anything that runs a shell
+ * command is judged by this positive list instead, and every segment of a
+ * compound command has to match.
+ */
+const ALLOWED_COMMANDS = [
+  /^(ls|pwd|cat|head|tail|wc|file|stat|tree|du|df|env|date|whoami|basename|dirname|realpath)\b/i,
+  /^(grep|rg|ag|find|fd|sed\s+-n|awk|cut|sort|uniq|tr|jq|yq|xargs\s+cat|nl|diff|cmp)\b/i,
+  /^(printf|echo)\b/i,
+  /^git\s+(status|diff|log|show|rev-parse|describe|ls-files|blame|shortlog|config\s+--get|branch\s*$|branch\s+(-l|--list))\b/i,
+  /^(npm|pnpm|yarn)\s+(test|run\s+[\w:-]+|ls|why|exec\s+tsc)\b/i,
+  /^node\s+(?!.*(-e|--eval|--input-type))\S+/i,
+  /^(npx\s+tsc|tsc|eslint|prettier|vitest|jest|pytest|cargo\s+(test|check|clippy)|go\s+(test|vet|build))\b/i,
+  /^cd\s+\S+$/i,
+];
+
+/**
+ * Whether every segment of a compound command is on the allowlist.
+ * @param {string} command
+ */
+export function isAllowlistedCommand(command) {
+  const text = String(command ?? '').trim();
+  if (text === '') return false;
+  // Substitution and redirection hide a second command inside the first.
+  if (/[`$][({]|>>?\s*\S|<\s*\S|<<|\beval\b/.test(text)) return false;
+  const segments = text
+    .split(/\|\||&&|[;|&\n]/)
+    .map((segment) => segment.trim())
+    .filter((segment) => segment !== '');
+  if (segments.length === 0) return false;
+  return segments.every((segment) => ALLOWED_COMMANDS.some((re) => re.test(segment)));
+}
 
 /** Where a credential usually lives. */
 const SECRET_PATTERNS = [
@@ -334,7 +427,7 @@ function contentTexts(content) {
  */
 function workspacePrefixes(workspace) {
   if (!workspace) return [];
-  const base = String(workspace).replace(/\/+$/, '');
+  const base = path.resolve(String(workspace));
   const variants = new Set([base]);
   try {
     variants.add(realpathSync(base));
@@ -343,9 +436,41 @@ function workspacePrefixes(workspace) {
   }
   for (const variant of [...variants]) {
     if (variant.startsWith('/private/')) variants.add(variant.slice('/private'.length));
-    else variants.add(`/private${variant}`);
+    else if (variant.startsWith('/')) variants.add(`/private${variant}`);
   }
   return [...variants];
+}
+
+/** A Windows absolute path (`C:\\...`, `\\\\server\\share`) written on any platform. */
+function isWindowsAbsolute(candidate) {
+  return /^[a-zA-Z]:[\\/]/.test(candidate) || candidate.startsWith('\\\\');
+}
+
+/**
+ * Decide whether one path named by a request lands outside the workspace.
+ *
+ * Every candidate is resolved against the workspace before comparison, so
+ * `../outside.txt` and `/ws/../outside.txt` are escapes rather than "not
+ * absolute, therefore fine". A Windows absolute path is an escape whenever the
+ * workspace is not itself on that drive, because this process cannot
+ * meaningfully compare the two.
+ * @param {string} candidate
+ * @param {string[]} prefixes
+ */
+function escapesWorkspace(candidate, prefixes) {
+  if (prefixes.length === 0) return candidate.startsWith('/') || isWindowsAbsolute(candidate);
+  if (isWindowsAbsolute(candidate)) {
+    const normalized = candidate.replace(/\\/g, '/');
+    return !prefixes.some((prefix) => {
+      const p = prefix.replace(/\\/g, '/');
+      return normalized === p || normalized.toLowerCase().startsWith(`${p.toLowerCase()}/`);
+    });
+  }
+  return prefixes.every((prefix) => {
+    const resolved = path.resolve(prefix, candidate.replace(/^~(?=\/|$)/, homedir()));
+    const relative = path.relative(prefix, resolved);
+    return relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative);
+  });
 }
 
 /**
@@ -369,10 +494,20 @@ export function classifyPermissionRequest(request, context = {}) {
   const toolCall = request?.toolCall ?? {};
   const meta = toolCall._meta ?? {};
   const title = String(toolCall.title ?? '');
+  const kind = String(toolCall.kind ?? '').toLowerCase();
+  // Kiro and OpenCode write the command into the title ("Running: npm test",
+  // or the bare command); Devin and Codex put it in structured fields. Reading
+  // only the structured ones leaves the title-carrying backends unjudgeable,
+  // which reads as "not allowlisted" for every command they send.
+  const titleCommand =
+    kind === 'execute' || /^(running|run|execute|executing|command)\b/i.test(title)
+      ? title.replace(/^(running|run|execute|executing|command)\s*:?\s*/i, '')
+      : '';
   const command = firstString([
     toolCall.rawInput?.command,
     meta['cognition.ai/editableCommand'],
     ...contentTexts(toolCall.content),
+    titleCommand,
   ]);
   const declaredPaths = [
     ...(Array.isArray(toolCall.locations) ? toolCall.locations.map((location) => location?.path) : []),
@@ -382,7 +517,7 @@ export function classifyPermissionRequest(request, context = {}) {
   ].filter((value) => typeof value === 'string' && value !== '');
   const optionText = (request?.options ?? []).map((option) => String(option?.name ?? '')).join(' ');
 
-  const kindRaw = String(toolCall.kind ?? '').toLowerCase();
+  const kindRaw = kind;
   const action =
     kindRaw === 'edit' || /\b(edit|write|create|patch|apply)\b/i.test(title)
       ? 'edit'
@@ -399,15 +534,14 @@ export function classifyPermissionRequest(request, context = {}) {
   const commandEvidence = `${title} ${command} ${JSON.stringify(toolCall.rawInput ?? '')} ${optionText}`;
   const paths = [...new Set([...declaredPaths, ...extractPaths(`${command} ${title} ${declaredPaths.join(' ')}`)])];
   const prefixes = workspacePrefixes(context.workspace);
-  const outsideWorkspace = paths.some((candidate) => {
-    if (!candidate.startsWith('/')) return false;
-    if (prefixes.length === 0) return true;
-    return !prefixes.some((prefix) => candidate === prefix || candidate.startsWith(`${prefix}/`));
-  });
+  const outsideWorkspace = paths.some((candidate) => escapesWorkspace(candidate, prefixes));
   const destructive = DESTRUCTIVE_PATTERNS.some((re) => re.test(commandEvidence));
   const network = action === 'network' || NETWORK_PATTERNS.some((re) => re.test(commandEvidence));
   const touchesSecrets = SECRET_PATTERNS.some((re) => re.test(commandEvidence));
   const identified = command !== '' || declaredPaths.length > 0 || title !== '';
+  // An execute request is only ever *recommended* when its command is on the
+  // positive list; everything else is judged by the caller.
+  const allowlisted = command === '' ? action !== 'execute' : isAllowlistedCommand(command);
 
   /** @type {string[]} */
   const reasons = [];
@@ -416,10 +550,12 @@ export function classifyPermissionRequest(request, context = {}) {
   if (touchesSecrets) reasons.push('the target looks like a credential');
   if (outsideWorkspace) reasons.push('a path outside the workspace is involved');
   if (!identified) reasons.push('the request names no command, file or title to judge');
+  if (action === 'execute' && !allowlisted) reasons.push('the command is not one an automated answerer may approve');
 
   return {
     action,
     command: command || null,
+    allowlisted,
     paths,
     outsideWorkspace,
     destructive,

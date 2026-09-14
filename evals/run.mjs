@@ -230,6 +230,7 @@ async function runFixture(fixture, backend, flags, runIndex) {
     status: 'fail',
     reason: null,
     permissionMode: flags.permissionMode ?? 'default',
+    autoAnswer: flags.autoAnswer === true,
     permissions: null,
     /** @type {any[]} */
     permissionDecisions: [],
@@ -318,8 +319,10 @@ async function runFixture(fixture, backend, flags, runIndex) {
           workspace,
           decisions: record.permissionDecisions,
         });
-        if (answered === 0) break; // Nothing safe to answer; leave it for a person.
-        continue;
+        // Nothing safe to answer: fall through to the supervised path rather
+        // than breaking, which would stop the session and take the request
+        // away from the person who could still answer it.
+        if (answered > 0) continue;
       }
       await new Promise((resolve) => setTimeout(resolve, 1000));
     } while (Date.now() - t0 < flags.timeout);
@@ -387,8 +390,16 @@ async function runFixture(fixture, backend, flags, runIndex) {
 export function aggregateEvidence(runs) {
   const evidence = {};
   for (const r of runs.filter((x) => x.status !== 'skip')) {
-    const key = `${r.role}|${r.backend}|${r.model ?? ''}|${r.effort ?? ''}`;
+    // Posture is part of the measurement, not a footnote: a run that could
+    // edit without asking is not comparable with one that stopped at every
+    // write, and merging them would let routing prefer a permission level the
+    // route will not get in normal use.
+    const posture = `${r.permissionMode ?? 'default'}${r.autoAnswer ? '+auto' : ''}`;
+    const key = `${r.role}|${r.backend}|${r.model ?? ''}|${r.effort ?? ''}|${posture}`;
     const e = (evidence[key] ??= {
+      permissionMode: r.permissionMode ?? 'default',
+      autoAnswer: r.autoAnswer === true,
+      enforcement: r.permissions?.enforcement ?? null,
       runs: 0, successes: 0, scopeCompliant: 0, scopeKnown: 0,
       precisionSamples: [], latencySamples: [], uncachedInputSamples: [], totalTokenSamples: [],
     });
@@ -404,6 +415,11 @@ export function aggregateEvidence(runs) {
   const out = {};
   for (const [key, e] of Object.entries(evidence)) {
     out[key] = {
+      // Carried into the written evidence: a measurement without its posture
+      // cannot be compared with another one.
+      permissionMode: e.permissionMode,
+      autoAnswer: e.autoAnswer,
+      enforcement: e.enforcement,
       runs: e.runs,
       successRate: e.runs ? e.successes / e.runs : 0,
       precision: e.precisionSamples.length

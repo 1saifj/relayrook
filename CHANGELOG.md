@@ -1,5 +1,42 @@
 # Changelog
 
+## Unreleased
+
+### Fixes from an independent review
+
+RelayRook delegated a read-only review of its own 0.3.0 changes to Kiro on
+`gpt-5.6-sol` at effort `max`, through its own gated session. Nine findings,
+all confirmed:
+
+- **A widened Codex session could be reused by a plain one.** The session key
+  carried the permission mode's *name* but not the effective sandbox and
+  approval policy, so a `gated` start could attach to a warm
+  `danger-full-access` worker. Both are now part of session identity.
+- **`read-only` pinned to a wider sandbox still reported `parent-gated`.**
+  The mapped `approvalPolicy: never` survived the override, so nothing
+  sandboxed the session and nothing asked. Enforcement is now derived from the
+  effective sandbox/approval pair, and the posture reports `reviewSafe`.
+- **A review role could be prompted into an ungated ACP session.** The posture
+  check only covered Codex; it now reads the recorded posture for every
+  backend, at start and at prompt time.
+- **Classification treated relative and Windows paths as inside the
+  workspace.** `../outside.txt`, `<workspace>/../outside`, `~/x` and
+  `C:\Windows\...` were all "not absolute, therefore fine". Paths are now
+  resolved against the workspace before comparison.
+- **Absence from a blacklist was treated as safety.** `git restore .` and
+  `gh pr create` were recommended. A shell command is now recommended only
+  when every segment matches a positive allowlist, and substitution or
+  redirection disqualifies it.
+- **A resumed turn inherited the time it spent awaiting permission.** A stall
+  timer armed before the pause could fire moments after the parent answered
+  and cancel a turn that had just resumed.
+- **Provider error codes were dropped.** `{message, code: "insufficient_quota"}`
+  classified as `unknown`; sibling code fields are now kept and canonical
+  underscore/hyphen codes are matched.
+- **The eval runner stopped a session it said it was leaving for a person**,
+  and merged route evidence measured under different permission postures.
+  Posture and auto-answer policy are now part of evidence identity.
+
 ## 0.3.0
 
 ### Turn watchdogs
