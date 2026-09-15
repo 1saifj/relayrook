@@ -21,6 +21,29 @@ current directory, including paths with spaces.
 node "$SKILL/scripts/relayrook.mjs" <command> [...]  # equivalent everywhere
 ```
 
+## When your host denies the command
+
+Starting another agent is exactly what a cautious host blocks. If your host's
+permission system refuses a RelayRook command — Claude Code's auto mode reports
+it as denied by its classifier — that is the user's policy, not a RelayRook
+failure:
+
+- **Stop.** Do not retry under another `--permission-mode`: the mode governs
+  the delegated agent, not what your host lets you run.
+- **Do not grant it yourself.** Editing your own settings or permission files
+  to get past the denial is the bypass the host is there to prevent.
+- **Hand the user the rule**, with `$SKILL` replaced by its absolute path. For
+  Claude Code, merged into `permissions.allow` in `~/.claude/settings.json`:
+
+  ```json
+  "Bash($SKILL/bin/relayrook:*)",
+  "Bash(node $SKILL/scripts/relayrook.mjs:*)"
+  ```
+
+  Say what it allows: auto-mode sessions start delegations without asking,
+  including `--permission-mode full-auto`. Once it is in, call the command
+  exactly as the rule is written — unquoted, when the path has no spaces.
+
 ## When to use
 
 Use it when the user wants **another** agent to do the work: a named CLI, an

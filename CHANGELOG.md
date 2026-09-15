@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Host denials
+
+`SKILL.md` now tells a host what to do when its own permission system refuses
+a RelayRook command — Claude Code's auto mode does exactly that. A session
+that hit the denial retried under a different `--permission-mode`, then tried
+to write its own settings file to allow the call. The skill now says to stop,
+never to grant the permission itself, and to hand the user the exact allow
+rule along with what it permits.
+
 ### Fixes from an independent review
 
 RelayRook delegated a read-only review of its own 0.3.0 changes to Kiro on
