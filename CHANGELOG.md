@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+### Classifier false positives from a live review
+
+A session driving two Kiro reviews hit enough false flags that it replaced
+RelayRook's classification with its own allow-by-default gate — one that
+approved every non-execute request, edits included, in a read-only review.
+The flags that drove it there were wrong:
+
+- `tool --version >/dev/null 2>&1` read as destructive: redirecting into
+  `/dev` was matched without exempting `/dev/null`, `/dev/stdout`,
+  `/dev/stderr` and `/dev/tty`.
+- `/opt/homebrew/bin/shellcheck src/x.sh` read as a workspace escape: the
+  program word was treated as a target. Tools addressed by their install
+  directory are now judged as the bare tool; a script run from anywhere else
+  still asks.
+- A file read whose content contained a URL read as a network call, and the
+  URL became the path `//`: content blocks were treated as the command.
+  Content now counts only when it declares itself a shell command, and a URL
+  is never a path.
+- Code that mentioned `curl` or `rm -rf` inside an edit's new file body was
+  judged as those commands. Evidence is now the request's command, title and
+  options, not the file body.
+- `process.env` read as a `.env` file, while
+  `application_default_credentials.json` was not recognised as a credential
+  at all. Secret detection is now path-shaped.
+
+The allowlist also gained version and help lookups, common linters, and shell
+grammar around listed commands. In the other direction it now refuses commands
+that carry a second one inside a listed first word — `env sh -c`,
+`awk 'BEGIN{system(...)}'`, `find -exec` and `-delete`, backticks and `$VAR`
+expansion — and code evaluated through `node -p`, `--print`, `-r`,
+`--require`, `--import` and `--loader`, not just `-e`. A read or edit request
+that does not name the file it touches is never recommended.
+
 ### Host denials
 
 `SKILL.md` now tells a host what to do when its own permission system refuses

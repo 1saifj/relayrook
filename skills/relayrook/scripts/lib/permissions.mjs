@@ -325,7 +325,11 @@ const DESTRUCTIVE_PATTERNS = [
   /\bnpm\s+(publish|unpublish)\b/i,
   /\bdocker\s+(rm|rmi|system\s+prune)\b/i,
   /\bdrop\s+(table|database)\b/i,
-  />\s*\/(?:etc|usr|bin|dev)\b/i,
+  // Writing into system directories. `/dev/null`, `/dev/stdout`, `/dev/stderr`
+  // and `/dev/tty` are where a read-only command sends output it does not
+  // want; flagging them made `tool --version >/dev/null 2>&1` look destructive.
+  />\s*\/(?:etc|usr|bin|sbin|boot|System|Library)\b/i,
+  />\s*\/dev\/(?!(?:null|stdout|stderr|tty)\b|fd\/)/i,
 ];
 
 /** Commands that leave the machine. */
@@ -346,7 +350,8 @@ const NETWORK_PATTERNS = [
  * compound command has to match.
  */
 const ALLOWED_COMMANDS = [
-  /^(ls|pwd|cat|head|tail|wc|file|stat|tree|du|df|env|date|whoami|basename|dirname|realpath)\b/i,
+  // `env` is deliberately absent: `env sh -c "..."` runs anything.
+  /^(ls|pwd|cat|head|tail|wc|file|stat|tree|du|df|date|whoami|basename|dirname|realpath)\b/i,
   /^(grep|rg|ag|find|fd|sed\s+-n|awk|cut|sort|uniq|tr|jq|yq|xargs\s+cat|nl|diff|cmp)\b/i,
   /^(printf|echo)\b/i,
   /^git\s+(status|diff|log|show|rev-parse|describe|ls-files|blame|shortlog|config\s+--get|branch\s*$|branch\s+(-l|--list))\b/i,
@@ -354,6 +359,37 @@ const ALLOWED_COMMANDS = [
   /^node\s+(?!.*(-e|--eval|--input-type))\S+/i,
   /^(npx\s+tsc|tsc|eslint|prettier|vitest|jest|pytest|cargo\s+(test|check|clippy)|go\s+(test|vet|build))\b/i,
   /^cd\s+\S+$/i,
+  /^(command\s+-v|which|type|hash)\s+[\w.-]+$/i,
+  // A bare tool asked for its version or help reads nothing and writes nothing.
+  /^[\w.-]+\s+(--version|-V|--help|-h|version)$/i,
+  /^(shellcheck|hadolint|tflint|actionlint|yamllint|markdownlint)\b/i,
+];
+
+/**
+ * Directories a listed tool is normally installed in. A command addressed by
+ * one of these paths is judged as the bare tool, so `/opt/homebrew/bin/shellcheck`
+ * is shellcheck; a script run from anywhere else is not on the list at all.
+ */
+const TOOL_DIRS = /^(?:\/usr(?:\/local)?\/s?bin|\/s?bin|\/opt\/homebrew\/bin|(?:\.\/)?node_modules\/\.bin)\/(?=[\w.-]+(?:\s|$))/;
+
+/** Shell grammar that wraps commands without being one. */
+const SHELL_KEYWORDS = /^(?:(?:if|then|else|elif|do|while|until|!)\s+)+/;
+
+/**
+ * Ways an allowlisted command can carry another one, or reach a path this
+ * process cannot see. Each of these turns an otherwise-listed command into a
+ * question for the caller.
+ */
+const ESCAPE_HATCHES = [
+  /[`$]/, //           substitution, and `$HOME`-style expansion of a path
+  />>?\s*\S|<\s*\S|<</, // redirection, including here-documents
+  /\b(eval|exec|source)\b/i,
+  /(?:^|\s)-{1,2}(?:exec(?:dir)?|ok(?:dir)?|delete|fprint\w*|fls)\b/i, // find's acting primaries
+  /\bsystem\s*\(/i, //  awk 'BEGIN{system("...")}'
+  /\b(sh|bash|zsh|dash|fish|python3?|perl|ruby)\s+(-\w+\s+)*-c\b/i,
+  // Node evaluates code from -e, -p and --print as well, and preloads it from
+  // -r, --require, --import and --loader.
+  /\s-[epr](\s|$)|--(eval|print|input-type|require|import|loader)\b/i,
 ];
 
 /**
@@ -361,26 +397,34 @@ const ALLOWED_COMMANDS = [
  * @param {string} command
  */
 export function isAllowlistedCommand(command) {
-  const text = String(command ?? '').trim();
+  // Discarding or merging output streams writes nothing anyone needs to see,
+  // so those redirections are removed before redirection counts as a hatch.
+  const text = String(command ?? '')
+    .replace(/(?:^|\s)(?:[12&]?>>?\s*\/dev\/null|[12]>&[12]|>&[12])(?=\s|$|[;|&])/g, ' ')
+    .trim();
   if (text === '') return false;
-  // Substitution and redirection hide a second command inside the first.
-  if (/[`$][({]|>>?\s*\S|<\s*\S|<<|\beval\b/.test(text)) return false;
+  if (ESCAPE_HATCHES.some((re) => re.test(text))) return false;
   const segments = text
     .split(/\|\||&&|[;|&\n]/)
-    .map((segment) => segment.trim())
-    .filter((segment) => segment !== '');
+    .map((segment) => segment.trim().replace(SHELL_KEYWORDS, '').trim())
+    .filter((segment) => segment !== '' && !/^(fi|done|else|then)$/.test(segment))
+    .map((segment) => segment.replace(TOOL_DIRS, ''));
   if (segments.length === 0) return false;
   return segments.every((segment) => ALLOWED_COMMANDS.some((re) => re.test(segment)));
 }
 
 /** Where a credential usually lives. */
 const SECRET_PATTERNS = [
-  /\.env\b/i,
-  /\bid_rsa\b/i,
+  // A `.env` file — not `process.env`, which is a property access.
+  /(?:^|[\s'"=/\\:])\.env(?:\.[\w-]+)?(?=$|[\s'"/\\;:|&)])/i,
+  /\bid_(?:rsa|ed25519|ecdsa|dsa)\b/i,
   /\.ssh\//i,
-  /\bcredentials?\b/i,
-  /\.netrc\b/i,
+  // `credentials`, `.aws/credentials`, `application_default_credentials.json`.
+  /(?:^|[\s'"=/\\:._-])credentials?(?:\.(?:json|db|ya?ml|toml|ini))?(?=$|[\s'"/\\;:|&)])/i,
+  /\.netrc\b|\.npmrc\b|\.pypirc\b/i,
   /\bsecrets?\.(json|ya?ml|toml)\b/i,
+  /\.config\/gcloud\/|\.aws\/|\.kube\/config|\.docker\/config\.json|\.pulumi\/credentials/i,
+  /\bauth\.json\b|\bservice[-_]account[\w.-]*\.json\b/i,
 ];
 
 /**
@@ -390,8 +434,33 @@ const SECRET_PATTERNS = [
  * @param {string} text
  */
 function extractPaths(text) {
-  const matches = text.match(/(?:^|[\s'"=(])((?:~|\.{1,2})?\/[^\s'";:|&)]+|[\w.-]+\/[^\s'";:|&)]+)/g) ?? [];
-  return [...new Set(matches.map((m) => m.replace(/^[\s'"=(]+/, '').replace(/[.,;:]+$/, '')))].slice(0, 20);
+  // A URL is not a path: `https://` used to yield `//`, which is outside every
+  // workspace.
+  const withoutUrls = text.replace(/\b[a-z][a-z0-9+.-]*:\/\/\S+/gi, ' ');
+  const matches = withoutUrls.match(/(?:^|[\s'"=(])((?:~|\.{1,2})?\/[^\s'";:|&)]+|[\w.-]+\/[^\s'";:|&)]+)/g) ?? [];
+  return [...new Set(matches.map((m) => m.replace(/^[\s'"=(]+/, '').replace(/[.,;:]+$/, '')))]
+    .filter((candidate) => !/^\/dev\/(?:null|stdout|stderr|tty)$/.test(candidate))
+    .slice(0, 20);
+}
+
+/**
+ * The part of a command that names what it acts on: each segment without its
+ * program word — `/opt/homebrew/bin/shellcheck` is the tool, not a target —
+ * except `cd`/`pushd`, whose argument is where everything after it runs.
+ * @param {string} command
+ */
+function commandTargets(command) {
+  return String(command ?? '')
+    .split(/\|\||&&|[;|&\n]/)
+    .map((segment) =>
+      segment
+        .trim()
+        .replace(SHELL_KEYWORDS, '')
+        .replace(/^(?:\w+=\S*\s+)+/, ''),
+    )
+    .filter(Boolean)
+    .map((segment) => (/^(cd|pushd)\s/.test(segment) ? segment : segment.replace(/^\S+\s*/, '')))
+    .join(' ');
 }
 
 /** @param {any[]} candidates */
@@ -413,8 +482,16 @@ function contentTexts(content) {
   const out = [];
   for (const block of content) {
     const inner = block?.content ?? block;
-    if (typeof inner?.text === 'string') out.push(inner.text);
+    // Only content that declares itself a shell command is read as one. A
+    // read's content is the file it read, and treating that as the command
+    // turned every URL in a source file into a "network" flag.
+    const markedShell =
+      block?._meta?.['cognition.ai/preview_is_shell_command'] === true ||
+      inner?._meta?.['cognition.ai/preview_is_shell_command'] === true ||
+      /^(text\/x-shellscript|application\/x-sh)$/i.test(String(inner?.resource?.mimeType ?? ''));
+    if (!markedShell) continue;
     if (typeof inner?.resource?.text === 'string') out.push(inner.resource.text);
+    else if (typeof inner?.text === 'string') out.push(inner.text);
   }
   return out;
 }
@@ -511,8 +588,11 @@ export function classifyPermissionRequest(request, context = {}) {
     kind === 'execute' || /^(running|run|execute|executing|command)\b/i.test(title)
       ? title.replace(/^(running|run|execute|executing|command)\s*:?\s*/i, '')
       : '';
+  const rawCommand = Array.isArray(toolCall.rawInput?.command)
+    ? toolCall.rawInput.command.join(' ')
+    : toolCall.rawInput?.command;
   const command = firstString([
-    toolCall.rawInput?.command,
+    rawCommand,
     meta['cognition.ai/editableCommand'],
     ...contentTexts(toolCall.content),
     titleCommand,
@@ -539,13 +619,21 @@ export function classifyPermissionRequest(request, context = {}) {
 
   // Option names describe the action but are not paths: an agent's phrasing
   // must never widen what counts as "inside the workspace".
-  const commandEvidence = `${title} ${command} ${JSON.stringify(toolCall.rawInput ?? '')} ${optionText}`;
-  const paths = [...new Set([...declaredPaths, ...extractPaths(`${command} ${title} ${declaredPaths.join(' ')}`)])];
+  // Evidence is what the request says it will do — its command, title and
+  // option names — never the body of a file it edits or read: code that
+  // mentions `curl` or `rm -rf` in a string is not a command.
+  const commandEvidence = `${title} ${command} ${optionText}`;
+  const targetText = action === 'execute' ? commandTargets(command) : `${title} ${commandTargets(command)}`;
+  const paths = [...new Set([...declaredPaths, ...extractPaths(`${targetText} ${declaredPaths.join(' ')}`)])];
   const prefixes = workspacePrefixes(context.workspace);
   const outsideWorkspace = paths.some((candidate) => escapesWorkspace(candidate, prefixes));
   const destructive = DESTRUCTIVE_PATTERNS.some((re) => re.test(commandEvidence));
-  const network = action === 'network' || NETWORK_PATTERNS.some((re) => re.test(commandEvidence));
-  const touchesSecrets = SECRET_PATTERNS.some((re) => re.test(commandEvidence));
+  const network =
+    action === 'network' ||
+    typeof toolCall.rawInput?.url === 'string' ||
+    NETWORK_PATTERNS.some((re) => re.test(commandEvidence));
+  const secretEvidence = `${commandEvidence} ${paths.join(' ')}`;
+  const touchesSecrets = SECRET_PATTERNS.some((re) => re.test(secretEvidence));
   const identified = command !== '' || declaredPaths.length > 0 || title !== '';
   // An execute request is only ever *recommended* when its command is on the
   // positive list; everything else is judged by the caller.
@@ -558,6 +646,9 @@ export function classifyPermissionRequest(request, context = {}) {
   if (touchesSecrets) reasons.push('the target looks like a credential');
   if (outsideWorkspace) reasons.push('a path outside the workspace is involved');
   if (!identified) reasons.push('the request names no command, file or title to judge');
+  if ((action === 'edit' || action === 'read') && declaredPaths.length === 0 && paths.length === 0) {
+    reasons.push('the request does not say which file it touches');
+  }
   if (action === 'execute' && !allowlisted) reasons.push('the command is not one an automated answerer may approve');
 
   return {

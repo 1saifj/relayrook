@@ -147,6 +147,13 @@ that destroys a day of work is always the one no blacklist mentioned. Read it
 as evidence, not as an answer: `allow` means nothing in the request left the
 workspace or looked dangerous, and the decision is still yours.
 
+If you answer requests with a script, let it approve only `recommendation:
+allow` and bring everything else back to you one request at a time. Approving
+a request you invited — a mock run you asked the reviewer to try — is a
+decision; rewriting the answerer so that whole class of request passes is a new
+policy nobody approved. Never auto-approve an `edit` in a review. A flag you
+believe is wrong is a bug to report, not a rule to delete.
+
 Deciding one request (step 7) is a narrower question than choosing a mode:
 
 - **Allow** when the action is inside the workspace, inside the task you
