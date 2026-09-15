@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+### An allowlist that reads quotes like a shell
+
+Four of five reviewers stalled on ordinary git plumbing within minutes:
+`git cat-file`, `git ls-tree`, `git --no-optional-locks status`. And the
+command scanner split on `;` and `|` inside quotes and treated `=>`, `<` and
+`$` inside single-quoted search patterns as redirection and expansion, so
+`grep -n '=>' a.js` and `sed -n '1,5p;9p' f` were held too. The allowlist is
+now built on a quote-aware scanner, names the read-only git plumbing and
+harmless global options, and maps the ACP `search`, `delete` and `move` tool
+kinds.
+
+Widening it closed as much as it opened. The first version matched git's
+global options case-insensitively, so `-C dir` also matched `-c
+core.pager='sh -c id'`, which runs a program; the pattern is now
+case-sensitive, and `-c`, `-p`, `--git-dir`, `--work-tree`, `-O` and
+`--output` are refused outright. `awk`, `yq` and `go build` left the list;
+`sort -o`, `uniq IN OUT`, `tree -o`, `tsc` without `--noEmit`, `--write`,
+`--fix`, `--init`, snapshot updates, `fd -x`, `rg --pre` and `file -C` are
+refused, and `sed` is accepted only as a line printer.
+
+### Backend failures are the backend's
+
+Two Kiro reviews on `gpt-5.6-sol` at max effort failed together after Kiro's
+model request timed out three times; Kiro answered the prompt with a JSON-RPC
+`Internal error`, and RelayRook reported that as `relayrook_protocol_error` —
+its own fault, as far as a caller could tell. An error response from the
+backend is now `stopReason: backend_error`, with the JSON-RPC code, the retry
+and stall notices Kiro sent first, and a `timeout` category that marks the turn
+as worth retrying.
+
 ### Compact start
 
 `start` returned the backend's full model list and mode descriptions on every

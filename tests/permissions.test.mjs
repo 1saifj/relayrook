@@ -592,3 +592,78 @@ test('an action the classifier cannot name is never recommended', () => {
   assert.equal(crew.recommendation, 'ask-user');
   assert.match(crew.reasons.join('; '), /could not be classified/);
 });
+
+test('ordinary review commands pass once quotes are read like a shell reads them', () => {
+  // Every one of these was held from a live review: git plumbing the list did
+  // not name, global git options, and search patterns whose `=>`, `<` or `$`
+  // sit inside single quotes where the shell never acts on them.
+  for (const command of [
+    'git --no-optional-locks rev-parse HEAD && git --no-optional-locks status --short',
+    'git cat-file -t 4952336',
+    'git ls-tree -r --name-only 4952336 -- src tests',
+    'git merge-base main HEAD',
+    "grep -n '=>' src/a.mjs",
+    "grep -rnE 'end$' src",
+    "grep -rn '<div' web",
+    "sed -n '585,840p;900,950p' src/worker.mjs",
+    "nl -ba src/worker.mjs | sed -n '10,20p'",
+  ]) {
+    assert.equal(isAllowlistedCommand(command), true, command);
+  }
+});
+
+test('the wider list still refuses every way to write, run or reach further', () => {
+  for (const command of [
+    "git -c core.pager='sh -c id' log",
+    'git log --output=out.txt',
+    'git grep -Oevil pattern',
+    'sort -o out.txt in.txt',
+    'uniq in.txt out.txt',
+    'tree -o out.txt',
+    'tsc -p tsconfig.json',
+    'prettier --write src',
+    'eslint --fix src',
+    'vitest -u',
+    'go build ./...',
+    "awk '{print | \"sh\"}' f",
+    "yq -i '.a = 1' f.yaml",
+    "sed -n '1w out' f",
+    'grep "$HOME" notes',
+    "grep 'unbalanced notes",
+    // Case matters for git: -c sets config (a pager or fsmonitor runs a
+    // program), -p pages; -C and -P are harmless.
+    'git -p log',
+    'git --git-dir=/tmp/elsewhere/.git status',
+    'git --work-tree=/tmp/elsewhere status',
+    'fd -x rm {} .',
+    'rg --pre cat pattern src',
+    'file -C -m magic',
+  ]) {
+    assert.equal(isAllowlistedCommand(command), false, command);
+  }
+  assert.equal(isAllowlistedCommand('tsc --noEmit -p tsconfig.json'), true, 'type-checking alone emits nothing');
+  assert.equal(isAllowlistedCommand('git -C src log --oneline -5'), true, '-C only changes directory');
+  assert.equal(isAllowlistedCommand("grep -o 'abc' notes"), true, 'grep -o is not git -O');
+});
+
+test('ACP tool kinds are mapped to what they do', () => {
+  const workspace = '/tmp/relayrook-kinds-ws';
+  const search = classifyPermissionRequest(
+    { toolCall: { kind: 'search', title: "Searching for 'x' in src", locations: [{ path: `${workspace}/src` }] } },
+    { workspace },
+  );
+  assert.equal(search.action, 'read');
+  assert.equal(search.recommendation, 'allow');
+  const outside = classifyPermissionRequest(
+    { toolCall: { kind: 'search', title: "Searching for 'x'", locations: [{ path: '/tmp/elsewhere' }] } },
+    { workspace },
+  );
+  assert.equal(outside.recommendation, 'ask-user');
+  const deletion = classifyPermissionRequest(
+    { toolCall: { kind: 'delete', title: 'Delete a.mjs', locations: [{ path: `${workspace}/a.mjs` }] } },
+    { workspace },
+  );
+  assert.equal(deletion.action, 'edit');
+  assert.equal(deletion.destructive, true);
+  assert.equal(deletion.recommendation, 'ask-user');
+});

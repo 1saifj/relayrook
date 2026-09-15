@@ -103,7 +103,7 @@ options, so a parent decides on evidence instead of on a title:
 | `destructive` | `rm -rf`, `git push`, `git reset --hard`, `sudo`, `npm publish` and similar |
 | `network` | The action leaves this machine |
 | `touchesSecrets` | The target looks like a credential (`.env`, `~/.ssh`, `credentials`) |
-| `allowlisted` | The command matches the positive allowlist of read-only and build/test commands; every segment of a compound command must match, and substitution or redirection disqualifies it |
+| `allowlisted` | The command matches the positive allowlist of read-only and build/test commands; every segment of a compound command must match, and substitution or redirection disqualifies it. Quotes are read the way a shell reads them, so `grep -n '=>' a.js` is a search, not a redirect |
 | `recommendation` | `allow` only when none of the above fired, the request named something judgeable, and an execute request is allowlisted; otherwise `ask-user`, with `reasons` |
 
 Paths are resolved against the workspace before comparison, so `../outside`,
@@ -165,7 +165,12 @@ exit 0 after a denied tool call, so only the protocol's stop reason counts.
 Backend reasons pass through unchanged: `end_turn`, `max_tokens`,
 `max_turn_requests`, `refusal`, `cancelled`. RelayRook adds
 `relayrook_timeout`, `relayrook_process_exited` and `relayrook_protocol_error`
-for conditions the backend never reported. `relayrook_timeout` covers both
+for conditions the backend never reported, and `backend_error` when the backend
+answered the prompt with a JSON-RPC error instead of a stop reason. A
+`backend_error` turn carries the backend's `rpcCode`, the retry and stall
+notices it sent before failing, and a category — `timeout` means its own model
+request ran out of time and another attempt, with less context or effort, is
+reasonable. `relayrook_timeout` covers both
 watchdogs; read `watchdog.timeoutKind` to tell a silent backend (`stall`) from
 one that simply ran out of wall clock (`deadline`).
 

@@ -260,3 +260,24 @@ test('answering a permission restarts the activity clock', async () => {
   });
   assert.equal(finished.turn.state, 'completed');
 });
+
+test('a JSON-RPC error answer is the backend failing, with its own reason attached', async () => {
+  // Observed live: Kiro's model request timed out three times and Kiro answered
+  // the prompt with "Internal error". It was reported as a RelayRook protocol
+  // error, which sent the caller looking in the wrong place.
+  const submitted = await promptSession({ stateDir: ctx.stateDir, key: ctx.key, text: 'BACKEND_RPC_ERROR' });
+  const finished = await waitSession({
+    stateDir: ctx.stateDir,
+    key: ctx.key,
+    turnId: submitted.turnId,
+    timeoutMs: 10000,
+    stopOnStall: false,
+  });
+  assert.equal(finished.turn.state, 'failed');
+  assert.equal(finished.turn.stopReason, 'backend_error');
+  assert.equal(finished.turn.error.code, 'backend_error');
+  assert.equal(finished.turn.error.rpcCode, -32603);
+  assert.equal(finished.turn.error.category, 'timeout');
+  assert.equal(finished.turn.error.retryable, true);
+  assert.ok(finished.turn.error.notices.some((notice) => /timed out/i.test(notice.message)));
+});

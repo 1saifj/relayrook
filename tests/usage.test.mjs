@@ -155,3 +155,10 @@ test('a local file permission error is not a provider auth failure', () => {
   assert.equal(classifyBackendError('Request failed [401]').category, 'auth');
   assert.equal(classifyBackendError('invalid_api_key').category, 'auth');
 });
+
+test('a provider request that ran out of time is a retryable timeout', () => {
+  const timeout = classifyBackendError('Internal error | Response timed out - retrying | Request timed out, retrying');
+  assert.deepEqual(timeout, { category: 'timeout', retryable: true, reroute: false });
+  // Quota still wins when both appear: a timeout on an exhausted account will not clear.
+  assert.equal(classifyBackendError('usage limit reached; request timed out').category, 'quota');
+});

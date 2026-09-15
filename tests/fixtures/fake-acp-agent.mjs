@@ -107,6 +107,20 @@ async function runPrompt(id, params) {
     return;
   }
 
+  if (text.includes('BACKEND_RPC_ERROR')) {
+    // What Kiro does when its model request keeps timing out: stall and retry
+    // notices, then a JSON-RPC error instead of a stopReason.
+    const notice = (payload) => send({ method: '_kiro.dev/session/update', params: { sessionId, update: payload } });
+    notice({ sessionUpdate: 'stream_stall_notice', message: 'Response timed out - retrying' });
+    notice({ sessionUpdate: 'retry_warning', attempt: 2, maxAttempts: 3, delaySecs: 1, message: 'Request timed out, retrying' });
+    notice({ sessionUpdate: 'retry_warning', attempt: 3, maxAttempts: 3, delaySecs: 1, message: 'Request timed out, retrying' });
+    setTimeout(() => {
+      send({ id, error: { code: -32603, message: 'Internal error' } });
+      activePrompt = null;
+    }, 50);
+    return;
+  }
+
   if (text.includes('PERMISSION_THEN_SILENT')) {
     // Asks, then says nothing at all after the answer — so a test can observe
     // what the activity clock does at the moment the turn resumes.

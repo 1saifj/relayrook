@@ -202,6 +202,7 @@ export class SessionWorker {
       awaitingPermission: turn.state === 'awaiting-permission',
       error: turn.error ?? null,
       backendError: turn.backendError ?? null,
+      backendNotices: turn.backendNotices ?? [],
       watchdog: this.#watchdogSummary(turn),
       recordDir: redactPath(this.store.turnDir(turn.id)),
     };
@@ -486,6 +487,23 @@ export class SessionWorker {
     if (this.turn?.finishedAt) return;
     this.#noteActivity();
     const kind = update?.sessionUpdate ?? 'unknown';
+    if (kind === 'agent_notification' && update?.method === '_kiro.dev/session/update' && this.turn) {
+      // Kiro announces its own trouble before failing a turn: stall notices and
+      // retry warnings ("Response timed out - retrying", attempt 3 of 3). They
+      // are the only explanation a later JSON-RPC "Internal error" comes with.
+      const vendor = update?.params?.update ?? {};
+      if (vendor.sessionUpdate === 'retry_warning' || vendor.sessionUpdate === 'stream_stall_notice') {
+        const notices = (this.turn.backendNotices ??= []);
+        notices.push({
+          kind: vendor.sessionUpdate,
+          message: String(vendor.message ?? ''),
+          attempt: vendor.attempt ?? null,
+          maxAttempts: vendor.maxAttempts ?? null,
+          at: new Date(this.now()).toISOString(),
+        });
+        if (notices.length > 5) notices.splice(0, notices.length - 5);
+      }
+    }
     if (kind === 'agent_notification' && update?.method === '_kiro.dev/metadata') {
       const observed = update?.params?.effort ?? null;
       if (observed && this.meta.effort.requested) {
@@ -1025,6 +1043,23 @@ export class SessionWorker {
       turn.state = turn.state === 'timed-out' ? 'timed-out' : 'failed';
       turn.stopReason = turn.state === 'timed-out' ? 'relayrook_timeout' : mapErrorStopReason(err);
       turn.error = { code: err?.code ?? 'internal_error', message: err?.message ?? String(err) };
+      if (turn.stopReason === 'backend_error') {
+        // The backend answered the prompt with a JSON-RPC error: its failure,
+        // not a RelayRook protocol violation. Reporting it as
+        // relayrook_protocol_error sent callers after RelayRook when Kiro's own
+        // model request had timed out three times.
+        const notices = turn.backendNotices ?? [];
+        const classified = classifyBackendError([err?.message, ...notices.map((n) => n.message)].join(' | '));
+        turn.error = {
+          code: ERROR_CODES.backend_error,
+          message: err?.message ?? 'Backend returned an error',
+          rpcCode: err?.details?.rpcCode ?? null,
+          category: classified.category,
+          retryable: classified.retryable,
+          reroute: classified.reroute,
+          notices,
+        };
+      }
     } else {
       const stopReason = result?.stopReason ?? null;
       turn.stopReason = stopReason;
@@ -1190,6 +1225,9 @@ export class SessionWorker {
 function mapErrorStopReason(err) {
   if (err?.code === ERROR_CODES.process_exited) return 'relayrook_process_exited';
   if (err?.code === ERROR_CODES.turn_timeout) return 'relayrook_timeout';
+  // An error *response* from the backend carries its JSON-RPC code; a protocol
+  // violation RelayRook detects itself does not.
+  if (err?.code === ERROR_CODES.protocol_error && err?.details?.rpcCode !== undefined) return 'backend_error';
   return 'relayrook_protocol_error';
 }
 

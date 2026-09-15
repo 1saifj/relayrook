@@ -26,6 +26,7 @@ export const ERROR_CODES = Object.freeze({
   caller_ambiguous: 'caller_ambiguous',
   route_envelope_invalid: 'route_envelope_invalid',
   protocol_error: 'protocol_error',
+  backend_error: 'backend_error',
   line_overflow: 'line_overflow',
   process_exited: 'process_exited',
   model_rejected: 'model_rejected',
@@ -112,7 +113,7 @@ export const STOP_REASONS = Object.freeze([
  *
  * The provider's own words are the evidence; this only labels them.
  * @param {string|null|undefined} message
- * @returns {{category: 'quota'|'auth'|'rate-limit'|'unknown', retryable: boolean, reroute: boolean}}
+ * @returns {{category: 'quota'|'auth'|'rate-limit'|'timeout'|'unknown', retryable: boolean, reroute: boolean}}
  */
 export function classifyBackendError(message) {
   // Providers write the same condition as prose, as an HTTP status, or as a
@@ -132,6 +133,12 @@ export function classifyBackendError(message) {
   // mode. It only counts alongside an authentication signal.
   if (/unauthorized|unauthenticated|not authenticated|invalid api key|401|403|log ?in again/.test(text)) {
     return { category: 'auth', retryable: false, reroute: true };
+  }
+  // A provider request that ran out of time — Kiro reports "Response timed out
+  // - retrying" before giving up — is worth another attempt, often with less
+  // context or effort, but it is not the backend being unavailable.
+  if (/timed out|timeout|deadline exceeded|etimedout|took too long/.test(text)) {
+    return { category: 'timeout', retryable: true, reroute: false };
   }
   return { category: 'unknown', retryable: true, reroute: false };
 }

@@ -350,14 +350,26 @@ const NETWORK_PATTERNS = [
  * compound command has to match.
  */
 const ALLOWED_COMMANDS = [
-  // `env` is deliberately absent: `env sh -c "..."` runs anything.
-  /^(ls|pwd|cat|head|tail|wc|file|stat|tree|du|df|date|whoami|basename|dirname|realpath)\b/i,
-  /^(grep|rg|ag|find|fd|sed\s+-n|awk|cut|sort|uniq|tr|jq|yq|xargs\s+cat|nl|diff|cmp)\b/i,
+  // `env` is absent because `env sh -c "..."` runs anything; `awk` because its
+  // program can pipe into a shell; `yq` because -i edits in place.
+  /^(ls|pwd|cat|head|tail|wc|file|stat|tree|du|df|date|whoami|basename|dirname|realpath|nl)\b/i,
+  /^(grep|egrep|fgrep|rg|ag|find|fd|cut|sort|uniq|tr|jq|xargs\s+cat|diff|cmp)\b/i,
+  // sed only as a line printer. Its `w` and `e` commands write files and run programs.
+  /^sed\s+-n\s+(['"]?)\d+(?:,\d+)?p(?:;\d+(?:,\d+)?p)*\1(?:\s|$)/i,
   /^(printf|echo)\b/i,
-  /^git\s+(status|diff|log|show|rev-parse|describe|ls-files|blame|shortlog|config\s+--get|branch\s*$|branch\s+(-l|--list))\b/i,
+  // Read-only git. Global options that change nothing on disk may come first;
+  // `-c` never may, because `-c core.pager=...` runs a program.
+  new RegExp(
+    '^git\\s+(?:(?:--no-optional-locks|--no-pager|-P|--literal-pathspecs|-C\\s+\\S+)\\s+)*' +
+      '(?:status|diff|log|show|rev-parse|rev-list|describe|ls-files|ls-tree|cat-file|merge-base|name-rev|' +
+      'for-each-ref|show-ref|grep|blame|shortlog|count-objects|worktree\\s+list|reflog\\s+show|' +
+      'config\\s+(?:--get|--get-all|-l|--list)|branch(?:\\s+(?:-l|--list|-a|-r|-v|-vv|--show-current))*\\s*$)(?:\\s|$)',
+    // Case-sensitive on purpose: under /i, `-C dir` also matched `-c
+    // core.pager=...`, which runs a program, and `-P` matched `-p`, the pager.
+  ),
   /^(npm|pnpm|yarn)\s+(test|run\s+[\w:-]+|ls|why|exec\s+tsc)\b/i,
-  /^node\s+(?!.*(-e|--eval|--input-type))\S+/i,
-  /^(npx\s+tsc|tsc|eslint|prettier|vitest|jest|pytest|cargo\s+(test|check|clippy)|go\s+(test|vet|build))\b/i,
+  /^node\s+\S+/i,
+  /^(npx\s+tsc|tsc|eslint|prettier|vitest|jest|pytest|cargo\s+(test|check|clippy)|go\s+(test|vet))\b/i,
   /^cd\s+\S+$/i,
   /^(command\s+-v|which|type|hash)\s+[\w.-]+$/i,
   // A bare tool asked for its version or help reads nothing and writes nothing.
@@ -376,21 +388,98 @@ const TOOL_DIRS = /^(?:\/usr(?:\/local)?\/s?bin|\/s?bin|\/opt\/homebrew\/bin|(?:
 const SHELL_KEYWORDS = /^(?:(?:if|then|else|elif|do|while|until|!)\s+)+/;
 
 /**
- * Ways an allowlisted command can carry another one, or reach a path this
- * process cannot see. Each of these turns an otherwise-listed command into a
- * question for the caller.
+ * Ways a listed command can do more than read, checked per segment against the
+ * text outside quotes — so `grep -n '=>' a.js` is a search, while `sort -o out`
+ * is a write.
  */
-const ESCAPE_HATCHES = [
-  /[`$]/, //           substitution, and `$HOME`-style expansion of a path
-  />>?\s*\S|<\s*\S|<</, // redirection, including here-documents
-  /\b(eval|exec|source)\b/i,
+const SEGMENT_HATCHES = [
   /(?:^|\s)-{1,2}(?:exec(?:dir)?|ok(?:dir)?|delete|fprint\w*|fls)\b/i, // find's acting primaries
-  /\bsystem\s*\(/i, //  awk 'BEGIN{system("...")}'
-  /\b(sh|bash|zsh|dash|fish|python3?|perl|ruby)\s+(-\w+\s+)*-c\b/i,
-  // Node evaluates code from -e, -p and --print as well, and preloads it from
-  // -r, --require, --import and --loader.
-  /\s-[epr](\s|$)|--(eval|print|input-type|require|import|loader)\b/i,
+  /\b(?:sh|bash|zsh|dash|fish|python3?|perl|ruby)\s+(?:-\w+\s+)*-c\b/i,
+  /^node\b.*\s-[epr](?:\s|$)|^node\b.*--(?:eval|print|input-type|require|import|loader)\b/i,
+  /\b(?:eval|exec|source)\b/i,
+  // git writing a file, starting a program, or reading another repository's
+  // configuration (`core.fsmonitor` and `core.pager` run programs). Case matters:
+  // `-c` and `-p` are these, `-C` and `-P` are not.
+  /--output(?:=|\s|$)|--open-files-in-pager\b|--ext-diff\b/i,
+  /^git\b.*\s(?:-O|-c\s|-c$|-p\b|--paginate|--config-env|--exec-path|--git-dir|--work-tree)/,
+  // fd and rg can run a program per match or as a preprocessor; `file -C`
+  // compiles a magic database to disk.
+  /^fd\b.*\s(?:-x|-X|--exec|--exec-batch)\b/,
+  /^rg\b.*--pre(?:=|\s|-glob)/,
+  /^file\b.*\s-C\b/,
+  /^sort\b.*\s(?:-o|--output)\b/i,
+  /^uniq\b(?:\s+-\S+)*\s+[^\s-]\S*\s+[^\s-]\S*/i, // uniq IN OUT writes OUT
+  /^tree\b.*\s-o\s/i,
+  /--(?:write|fix|init)\b|^prettier\b.*\s-w\b|^(?:vitest|jest)\b.*(?:\s-u\b|--update)/i,
+  /^(?:npx\s+)?tsc\b(?!.*--noEmit)/i, // tsc emits files unless told not to
 ];
+
+/**
+ * Walk a shell command once, respecting quotes. Returns its top-level segments
+ * and two views of the text: outside single quotes, where `$` and backticks
+ * still expand, and outside all quotes, where `>` still redirects. Returns null
+ * for an unbalanced quote, which hides where a command ends.
+ * @param {string} text
+ */
+function scanShell(text) {
+  /** @type {string[]} */
+  const segments = [];
+  let current = '';
+  let outsideSingle = '';
+  let outsideAll = '';
+  /** @type {string|null} */
+  let quote = null;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (quote === "'") {
+      current += ch;
+      if (ch === "'") quote = null;
+      continue;
+    }
+    if (quote === '"') {
+      current += ch;
+      if (ch === '\\' && i + 1 < text.length) {
+        current += text[i + 1];
+        outsideSingle += ch + text[i + 1];
+        i += 1;
+      } else if (ch === '"') {
+        quote = null;
+      } else {
+        outsideSingle += ch;
+      }
+      continue;
+    }
+    if (ch === "'" || ch === '"') {
+      quote = ch;
+      current += ch;
+      outsideSingle += ' ';
+      outsideAll += ' ';
+      continue;
+    }
+    if (ch === '\\' && i + 1 < text.length) {
+      current += ch + text[i + 1];
+      outsideSingle += ch + text[i + 1];
+      outsideAll += ch + text[i + 1];
+      i += 1;
+      continue;
+    }
+    const pair = text.slice(i, i + 2);
+    if (pair === '&&' || pair === '||' || ch === ';' || ch === '|' || ch === '&' || ch === '\n') {
+      segments.push(current);
+      current = '';
+      outsideSingle += ' ; ';
+      outsideAll += ' ; ';
+      if (pair === '&&' || pair === '||') i += 1;
+      continue;
+    }
+    current += ch;
+    outsideSingle += ch;
+    outsideAll += ch;
+  }
+  if (quote) return null;
+  segments.push(current);
+  return { segments: segments.map((segment) => segment.trim()).filter(Boolean), outsideSingle, outsideAll };
+}
 
 /**
  * Whether every segment of a compound command is on the allowlist.
@@ -398,19 +487,27 @@ const ESCAPE_HATCHES = [
  */
 export function isAllowlistedCommand(command) {
   // Discarding or merging output streams writes nothing anyone needs to see,
-  // so those redirections are removed before redirection counts as a hatch.
+  // so those redirections are removed before redirection counts against it.
   const text = String(command ?? '')
     .replace(/(?:^|\s)(?:[12&]?>>?\s*\/dev\/null|[12]>&[12]|>&[12])(?=\s|$|[;|&])/g, ' ')
     .trim();
   if (text === '') return false;
-  if (ESCAPE_HATCHES.some((re) => re.test(text))) return false;
-  const segments = text
-    .split(/\|\||&&|[;|&\n]/)
-    .map((segment) => segment.trim().replace(SHELL_KEYWORDS, '').trim())
+  const scanned = scanShell(text);
+  if (!scanned) return false;
+  // Substitution and expansion, including `$HOME`-style paths. Single quotes
+  // make them literal, so `grep -n 'end$' a.js` stays a search.
+  if (/[`$]/.test(scanned.outsideSingle)) return false;
+  if (/>>?\s*\S|<\s*\S|<</.test(scanned.outsideAll)) return false;
+  const segments = scanned.segments
+    .map((segment) => segment.replace(SHELL_KEYWORDS, '').trim())
     .filter((segment) => segment !== '' && !/^(fi|done|else|then)$/.test(segment))
     .map((segment) => segment.replace(TOOL_DIRS, ''));
   if (segments.length === 0) return false;
-  return segments.every((segment) => ALLOWED_COMMANDS.some((re) => re.test(segment)));
+  return segments.every((segment) => {
+    const bare = scanShell(segment)?.outsideAll ?? segment;
+    if (SEGMENT_HATCHES.some((re) => re.test(bare))) return false;
+    return ALLOWED_COMMANDS.some((re) => re.test(segment));
+  });
 }
 
 /** Where a credential usually lives. */
@@ -606,12 +703,15 @@ export function classifyPermissionRequest(request, context = {}) {
   const optionText = (request?.options ?? []).map((option) => String(option?.name ?? '')).join(' ');
 
   const kindRaw = kind;
+  // ACP tool kinds: delete and move change the workspace like an edit does;
+  // search reads it.
+  const changes = kindRaw === 'edit' || kindRaw === 'delete' || kindRaw === 'move';
   const action =
-    kindRaw === 'edit' || /\b(edit|write|create|patch|apply)\b/i.test(title)
+    changes || /\b(edit|write|create|patch|apply)\b/i.test(title)
       ? 'edit'
       : kindRaw === 'execute' || command !== '' || /\b(run|execute|bash|shell|command)\b/i.test(title)
         ? 'execute'
-        : kindRaw === 'read' || /\b(read|open|cat|view)\b/i.test(title)
+        : kindRaw === 'read' || kindRaw === 'search' || /\b(read|open|cat|view|search|searching)\b/i.test(title)
           ? 'read'
           : kindRaw === 'fetch' || /\b(fetch|http|url)\b/i.test(title)
             ? 'network'
@@ -627,7 +727,7 @@ export function classifyPermissionRequest(request, context = {}) {
   const paths = [...new Set([...declaredPaths, ...extractPaths(`${targetText} ${declaredPaths.join(' ')}`)])];
   const prefixes = workspacePrefixes(context.workspace);
   const outsideWorkspace = paths.some((candidate) => escapesWorkspace(candidate, prefixes));
-  const destructive = DESTRUCTIVE_PATTERNS.some((re) => re.test(commandEvidence));
+  const destructive = kindRaw === 'delete' || DESTRUCTIVE_PATTERNS.some((re) => re.test(commandEvidence));
   const network =
     action === 'network' ||
     typeof toolCall.rawInput?.url === 'string' ||
