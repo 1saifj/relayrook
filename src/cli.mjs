@@ -394,10 +394,6 @@ async function resolveCallerState(flags, env, stateDir) {
 }
 
 /**
- * Build the Codex `review/start` target from CLI flags.
- * @param {Record<string, any>} flags
- */
-/**
  * What a reported stall should do. `report` keeps the turn alive and lets the
  * parent decide; `cancel` restores the old kill-on-silence behaviour for hosts
  * that cannot poll.
@@ -430,6 +426,10 @@ function stallAction(flags) {
   return value;
 }
 
+/**
+ * Build the Codex `review/start` target from CLI flags.
+ * @param {Record<string, any>} flags
+ */
 function reviewTarget(flags) {
   const target = flagString(flags, 'target') ?? 'uncommitted-changes';
   switch (target) {
@@ -588,7 +588,10 @@ async function commandStart(flags, stateDir, env) {
     routeId,
     delegation: envelope,
     selection,
-    meta: session.meta,
+    // Compact like status and wait: a Kiro session's model list and mode
+    // descriptions — welcome messages included — ran to about 250 lines of JSON
+    // that every host paid for in context on every start. --full keeps them.
+    meta: compactMeta(session.meta, flagBool(flags, 'full')),
   };
 }
 

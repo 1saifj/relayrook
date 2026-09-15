@@ -11,7 +11,7 @@ code 1.
 | `doctor` | Caller evidence, installed backends, adapter readiness, configured routes | `--compact`, `--probe`, `--caller`, `--state-dir` |
 | `preflight` | Capability checks without starting a session | `--backend`, `--caller`, `--state-dir` |
 | `route` | Choose a backend/model/effort for a role | `--role`, `--agent`, `--model`, `--effort`, `--avoid`, `--allow-provider`, `--prefer-provider` |
-| `start` | Create or reuse a persistent session | `--backend`/`--agent` or `--role`, `--workspace`, `--model`, `--effort`, `--profile`, `--resume`, `--sandbox`, `--approval-policy`, `--no-reuse` |
+| `start` | Create or reuse a persistent session | `--backend`/`--agent` or `--role`, `--workspace`, `--model`, `--effort`, `--permission-mode`, `--profile`, `--resume`, `--sandbox`, `--approval-policy`, `--no-reuse`, `--full` |
 | `prompt` | Submit one turn | `--session`, `--text` or (`--role` and `--task`), `--scope`, `--check`, `--stall-timeout`, `--stall-action`, `--timeout` |
 | `steer` | Add input to the in-flight turn (Codex `turn/steer` only) | `--session`, `--text` |
 | `review` | Run a native review turn (Codex `review/start` only) | `--session`, `--target`, `--branch`, `--commit`, `--instructions`, `--delivery` |
@@ -203,6 +203,11 @@ Event kinds: `session_ready`, `session_recovered`, `session_not_resumable`,
 `turn_stalled` carries `silentMs`, `stallCount` and the configured `action`;
 `turn_resumed` follows when the backend speaks again; `turn_timeout` carries
 `reason: "stall" | "deadline"`.
+
+`start`, `status` and `wait` return compact session metadata by default: the
+backend's model list and mode descriptions are replaced by
+`availableModelsCount` and `modesAvailable`, because a Kiro session's list —
+welcome messages included — runs to hundreds of lines. Pass `--full` for them.
 
 `wait` stays compact by default: it returns `eventCount` without replaying raw
 events, and when `parsedResult.ok` is true it omits the duplicate answer text.

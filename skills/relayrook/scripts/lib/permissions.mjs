@@ -637,7 +637,7 @@ export function classifyPermissionRequest(request, context = {}) {
   const identified = command !== '' || declaredPaths.length > 0 || title !== '';
   // An execute request is only ever *recommended* when its command is on the
   // positive list; everything else is judged by the caller.
-  const allowlisted = command === '' ? action !== 'execute' : isAllowlistedCommand(command);
+  const allowlisted = command === '' ? action === 'read' || action === 'edit' : isAllowlistedCommand(command);
 
   /** @type {string[]} */
   const reasons = [];
@@ -649,6 +649,10 @@ export function classifyPermissionRequest(request, context = {}) {
   if ((action === 'edit' || action === 'read') && declaredPaths.length === 0 && paths.length === 0) {
     reasons.push('the request does not say which file it touches');
   }
+  // `other` is whatever could not be named. A Kiro reviewer's request titled
+  // "Spawning agent crew" landed here and was recommended — a tool that starts
+  // more agents is never an automatic yes, and neither is anything unnamed.
+  if (action === 'other') reasons.push('the action could not be classified');
   if (action === 'execute' && !allowlisted) reasons.push('the command is not one an automated answerer may approve');
 
   return {

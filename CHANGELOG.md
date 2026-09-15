@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Compact start
+
+`start` returned the backend's full model list and mode descriptions on every
+call — about 250 lines of JSON for a Kiro session, welcome messages included,
+spent from the host's context before any work began. It now returns the same
+compact metadata as `status` and `wait`; `--full` restores the lists.
+
 ### Classifier false positives from a live review
 
 A session driving two Kiro reviews hit enough false flags that it replaced

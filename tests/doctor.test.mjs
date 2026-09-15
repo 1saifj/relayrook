@@ -88,3 +88,40 @@ test('a workspace that does not exist is a usage error, not a backend spawn fail
   assert.equal(envelope.error.code, 'usage');
   assert.match(envelope.error.message, /Workspace does not exist/);
 });
+
+test('start returns compact session metadata unless --full is asked for', async (t) => {
+  // A Kiro session's model list and mode descriptions ran to about 250 lines
+  // of JSON on every start, all of it spent from the host's context.
+  const { fileURLToPath } = await import('node:url');
+  const stub = fileURLToPath(new URL('./fixtures/fake-acp-agent.mjs', import.meta.url));
+  const tmp = mkdtempSync(path.join(os.tmpdir(), 'relayrook-compact-start-'));
+  const stateDir = path.join(tmp, 'state');
+  const workspace = mkdtempSync(path.join(tmp, 'ws-'));
+  process.env.RELAYROOK_BACKEND_CMD_DEVIN = JSON.stringify([process.execPath, stub]);
+  process.env.FAKE_ACP_MODEL = 'swe-2-max';
+  let key = null;
+  t.after(async () => {
+    if (key) {
+      await main(['stop', '--session', key, '--state-dir', stateDir], { stdout: capture().stream, stderr: capture().stream });
+    }
+    delete process.env.RELAYROOK_BACKEND_CMD_DEVIN;
+    delete process.env.FAKE_ACP_MODEL;
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  const compactOut = capture();
+  const compactErr = capture();
+  const args = ['start', '--backend', 'devin', '--workspace', workspace, '--caller', 'codex', '--state-dir', stateDir];
+  assert.equal(await main(args, { stdout: compactOut.stream, stderr: compactErr.stream }), 0);
+  const compact = compactOut.json();
+  key = compact.session;
+  assert.equal(Object.hasOwn(compact.meta, 'availableModels'), false);
+  assert.equal(Object.hasOwn(compact.meta, 'modes'), false);
+  assert.equal(typeof compact.meta.availableModelsCount, 'number');
+  assert.ok(compact.meta.permissions, 'the posture is still reported');
+
+  const fullOut = capture();
+  const fullErr = capture();
+  assert.equal(await main([...args, '--full'], { stdout: fullOut.stream, stderr: fullErr.stream }), 0);
+  assert.ok(Array.isArray(fullOut.json().meta.availableModels), '--full keeps the model list');
+});

@@ -582,3 +582,13 @@ test('node cannot evaluate code through a flag the allowlist forgot', () => {
   }
   assert.equal(isAllowlistedCommand('node check.mjs'), true);
 });
+
+test('an action the classifier cannot name is never recommended', () => {
+  // Observed live: a reviewer asked to start sub-agents with a request titled
+  // only "Spawning agent crew", and it was recommended.
+  const crew = classifyPermissionRequest({ toolCall: { title: 'Spawning agent crew' } }, { workspace: '/tmp/ws' });
+  assert.equal(crew.action, 'other');
+  assert.equal(crew.allowlisted, false);
+  assert.equal(crew.recommendation, 'ask-user');
+  assert.match(crew.reasons.join('; '), /could not be classified/);
+});
